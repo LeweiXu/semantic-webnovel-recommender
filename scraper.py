@@ -16,7 +16,9 @@ import logging
 import random
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,14 +33,14 @@ OUTPUT_DIR = Path("output")
 STATE_FILE = Path("state.json")
 FAILED_LOG = Path("failed.log")
 LOG_DIR    = Path("logs")
-IMPERSONATE = "chrome136"
+IMPERSONATE = "chrome124"
 REQUEST_TIMEOUT = 20
 
-DELAY_CHAPTER = 0.5        # seconds between chapter page fetches (within a novel)
-DELAY_CHAPTER_JITTER = 0.15
+DELAY_CHAPTER = 0.1        # seconds between chapter page fetches (within a novel)
+DELAY_CHAPTER_JITTER = 0.05
 DELAY_NOVEL = 2.0          # seconds between novels
-DELAY_NOVEL_JITTER = 1.0
-BACKOFF_BASE = 10.0        # first-retry wait on CHALLENGED/ERROR
+DELAY_NOVEL_JITTER = 0.5
+BACKOFF_BASE = 5.0        # first-retry wait on CHALLENGED/ERROR
 BACKOFF_MAX = 60.0
 
 GL_PREFIX = "/gl/"
@@ -64,6 +66,25 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+# ── Terminal progress line ─────────────────────────────────────────────────────
+# Writes an in-place single line to stderr using \r; logging calls that follow
+# naturally overwrite it because they start from the same cursor position.
+
+_PROGRESS_WIDTH = 78  # characters wide before the \r clears
+
+def _progress(msg: str, newline: bool = False) -> None:
+    if newline:
+        sys.stderr.write(msg + "\n")
+    else:
+        sys.stderr.write(f"\r{msg:<{_PROGRESS_WIDTH}}")
+    sys.stderr.flush()
+
+def _progress_clear(newline: bool = False) -> None:
+    """Erase the in-place progress line. No-op in newline mode."""
+    if not newline:
+        sys.stderr.write(f"\r{' ' * _PROGRESS_WIDTH}\r")
+        sys.stderr.flush()
 
 # ── Response classification (mirrors probe_rate_limit.py) ──────────────────────
 
@@ -300,6 +321,16 @@ def split_into_chapters(pages: list[str]) -> list[tuple[str | None, str]]:
 
 _FS_UNSAFE = re.compile(r'[\\/:*?"<>|【】\r\n]')
 _DIVIDER = "═" * 40
+_UPLOAD_DATE_RE = re.compile(r'(\d{4})年(\d{2})月')
+
+
+def upload_month_dir(upload_date: str, base: Path) -> Path:
+    """Return base/YYYY-MM/, creating it if needed. Falls back to base/unknown/."""
+    m = _UPLOAD_DATE_RE.search(upload_date)
+    subdir = f"{m.group(1)}-{m.group(2)}" if m else "unknown"
+    d = base / subdir
+    d.mkdir(exist_ok=True)
+    return d
 
 
 def title_to_filename(title: str, author: str, status: str) -> str:
@@ -351,6 +382,40 @@ def write_txt(meta: NovelMeta, chapters: list[tuple[str | None, str]], out_path:
 
     content = "\n".join(lines) + "\n\n" + "\n\n".join(body_parts) + "\n"
     out_path.write_text(content, encoding="utf-8")
+
+
+# ── Preamble patch ────────────────────────────────────────────────────────────
+
+def update_nav_in_file(file_path: Path, direction: str, nav_title: str | None, nav_url: str | None) -> bool:
+    """Overwrite the 上一篇 or 下一篇 block in an existing .txt preamble.
+
+    direction: "prev" (上一篇) or "next" (下一篇)
+    Returns True if the file was modified.
+    """
+    if not file_path.exists():
+        return False
+
+    label = "上一篇" if direction == "prev" else "下一篇"
+    nav_file = title_to_filename(*_parse_h1(nav_title)) if nav_title else "—"
+    new_title_line  = f"{label}：{nav_title or '—'}\n"
+    new_url_line    = f"        URL:  {nav_url or '—'}\n"
+    new_file_line   = f"        文件: {nav_file}\n"
+
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    changed = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{label}："):
+            lines[i] = new_title_line
+            if i + 1 < len(lines) and lines[i + 1].lstrip().startswith("URL:"):
+                lines[i + 1] = new_url_line
+            if i + 2 < len(lines) and lines[i + 2].lstrip().startswith("文件:"):
+                lines[i + 2] = new_file_line
+            changed = True
+            break
+
+    if changed:
+        file_path.write_text("".join(lines), encoding="utf-8")
+    return changed
 
 
 # ── State ──────────────────────────────────────────────────────────────────────
@@ -448,10 +513,80 @@ def _log_failed(url: str, reason: str) -> None:
         f.write(f"{datetime.now().isoformat()}  {url}  {reason}\n")
 
 
+def _fetch_pages(
+    session: cffi_requests.Session,
+    chapter_urls: list[str],
+    workers: int,
+    verbose: bool,
+) -> list[str]:
+    """Fetch all chapter pages and return their cleaned text in order."""
+    total = len(chapter_urls)
+    w = len(str(total))
+    results: list[str] = [""] * total
+    lock = threading.Lock()
+    completed = 0
+
+    def _do_fetch(url: str) -> tuple[str, float, float]:
+        t0 = time.monotonic()
+        resp = fetch(session, url)
+        fetch_ms = (time.monotonic() - t0) * 1000
+        t1 = time.monotonic()
+        text = parse_chapter_page(resp.text)
+        parse_ms = (time.monotonic() - t1) * 1000
+        return text, fetch_ms, parse_ms
+
+    def _record(i: int, text: str, fetch_ms: float, parse_ms: float) -> None:
+        nonlocal completed
+        results[i] = text
+        chars = _nonws_chars(text)
+        with lock:
+            completed += 1
+            cnt = completed
+        _progress(
+            f"  [{cnt:>{w}}/{total}]"
+            f"  fetch {fetch_ms:5.0f}ms"
+            f"  parse {parse_ms:4.0f}ms"
+            f"  {chars:5d}字",
+            newline=verbose,
+        )
+
+    def _record_error(i: int, url: str, exc: Exception) -> None:
+        nonlocal completed
+        results[i] = f"[页面获取失败: {url}]"
+        with lock:
+            completed += 1
+        _progress_clear(verbose)
+        log.error("  Page %d failed (%s): %s", i + 1, url, exc)
+
+    if workers == 1:
+        for i, url in enumerate(chapter_urls):
+            if i > 0:
+                time.sleep(DELAY_CHAPTER + random.uniform(0, DELAY_CHAPTER_JITTER))
+            try:
+                text, fetch_ms, parse_ms = _do_fetch(url)
+                _record(i, text, fetch_ms, parse_ms)
+            except Exception as e:
+                _record_error(i, url, e)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_do_fetch, url): i for i, url in enumerate(chapter_urls)}
+            for fut in as_completed(futures):
+                i = futures[fut]
+                try:
+                    text, fetch_ms, parse_ms = fut.result()
+                    _record(i, text, fetch_ms, parse_ms)
+                except Exception as e:
+                    _record_error(i, chapter_urls[i], e)
+
+    return results
+
+
 def scrape_novel(
     session: cffi_requests.Session,
     url: str,
     output_dir: Path,
+    workers: int = 1,
+    verbose: bool = False,
 ) -> ScrapedNovel | None:
     """Fetch landing page + all pages, write .txt.
 
@@ -474,10 +609,11 @@ def scrape_novel(
         _log_failed(url, "parse failure")
         return None
 
-    out_path = output_dir / title_to_filename(meta.title, meta.author, meta.status)
+    novel_dir = upload_month_dir(meta.upload_date, output_dir)
+    out_path = novel_dir / title_to_filename(meta.title, meta.author, meta.status)
 
     if out_path.exists():
-        log.info("Skip (exists): %s", out_path.name)
+        log.info("Skip (exists): %s/%s", novel_dir.name, out_path.name)
         chapters = split_into_chapters([])
         return ScrapedNovel(meta=meta, chapters=chapters, page_count=0,
                             file_path=out_path, skipped=True)
@@ -487,24 +623,18 @@ def scrape_novel(
         _log_failed(url, "no chapters")
         return ScrapedNovel(meta=meta, chapters=[], page_count=0, file_path=out_path)
 
-    log.info("Scraping '%s' — %d pages", meta.title, len(meta.chapter_urls))
-    pages: list[str] = []
-    for i, ch_url in enumerate(meta.chapter_urls):
-        if i > 0:
-            time.sleep(DELAY_CHAPTER + random.uniform(0, DELAY_CHAPTER_JITTER))
-        try:
-            ch_resp = fetch(session, ch_url)
-            pages.append(parse_chapter_page(ch_resp.text))
-        except Exception as e:
-            log.error("  Page %d failed (%s): %s", i + 1, ch_url, e)
-            pages.append(f"[页面获取失败: {ch_url}]")
+    total = len(meta.chapter_urls)
+    log.info("Scraping '%s' — %d pages  (workers=%d)", meta.title, total, workers)
+    pages = _fetch_pages(session, meta.chapter_urls, workers, verbose)
 
     chapters = split_into_chapters(pages)
     chapter_count = sum(1 for h, _ in chapters if h is not None)
     write_txt(meta, chapters, out_path)
 
+    _progress_clear(verbose)
     log.info(
-        "Written: %s  (%d pages → %d章  %dKB)",
+        "Written: %s/%s  (%d pages → %d章  %dKB)",
+        novel_dir.name,
         out_path.name,
         len(pages),
         chapter_count,
@@ -526,8 +656,10 @@ def main() -> int:
     mode.add_argument("--seed", metavar="URL", help="Scrape URL and initialise state")
     mode.add_argument("--forward",  action="store_true", help="Scrape newer novels (下一篇 from newest)")
     mode.add_argument("--backward", action="store_true", help="Scrape older novels (上一篇 from oldest)")
-    parser.add_argument("--limit",  type=int, default=0,              help="Stop after N novels (0 = unlimited)")
-    parser.add_argument("--output", default=str(OUTPUT_DIR),          help="Output directory (default: output/)")
+    parser.add_argument("--limit",   type=int, default=0,             help="Stop after N novels (0 = unlimited)")
+    parser.add_argument("--output",  default=str(OUTPUT_DIR),         help="Output directory (default: output/)")
+    parser.add_argument("--workers", type=int, default=1,             help="Parallel page fetches per novel (default 1; try 3–5)")
+    parser.add_argument("--verbose", action="store_true",             help="Print each page on its own line instead of in-place")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -543,7 +675,7 @@ def main() -> int:
         t0 = time.monotonic()
 
         url = args.seed.strip()
-        novel = scrape_novel(session, url, output_dir)
+        novel = scrape_novel(session, url, output_dir, workers=args.workers, verbose=args.verbose)
         if novel:
             state["oldest_url"] = url
             state["newest_url"] = url
@@ -586,6 +718,18 @@ def main() -> int:
         write_run_footer(log_fh, 0, 0, 0, time.monotonic() - t0)
         return 0
 
+    # The boundary novel was scraped in a previous run and may have "—" for the
+    # direction we're now walking. Patch it with the live nav data we just fetched.
+    direction = "next" if is_forward else "prev"
+    nav_title = boundary_meta.next_title if is_forward else boundary_meta.prev_title
+    nav_url   = boundary_meta.next_url   if is_forward else boundary_meta.prev_url
+    boundary_file = upload_month_dir(boundary_meta.upload_date, output_dir) / title_to_filename(
+        boundary_meta.title, boundary_meta.author, boundary_meta.status
+    )
+    if update_nav_in_file(boundary_file, direction, nav_title, nav_url):
+        label_str = "下一篇" if is_forward else "上一篇"
+        log.info("Updated %s preamble of %s → %s", label_str, boundary_file.name, nav_url)
+
     n_scraped = n_skipped = n_failed = 0
 
     while current_url:
@@ -593,7 +737,7 @@ def main() -> int:
             log.info("Reached --limit %d.", args.limit)
             break
 
-        novel = scrape_novel(session, current_url, output_dir)
+        novel = scrape_novel(session, current_url, output_dir, workers=args.workers, verbose=args.verbose)
         if novel is None:
             n_failed += 1
             write_novel_log(log_fh, _stub_novel(current_url), "FAIL")

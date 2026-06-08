@@ -87,7 +87,7 @@ KNOWN_GOOD_URLS = [
 # curl_cffi impersonation target. chrome136 matches a recent Chrome release and
 # produces a TLS ClientHello / HTTP/2 fingerprint that Cloudflare recognises
 # as a real browser rather than a bot library.
-IMPERSONATE = "chrome136"
+IMPERSONATE = "chrome124"
 
 REQUEST_TIMEOUT = 20  # seconds
 

@@ -26,7 +26,10 @@ Stack: **Python**, `curl_cffi` (browser-impersonating HTTP, NOT `requests`),
 | File | Purpose |
 |------|---------|
 | `scraper.py` | The scraper. Chain-walk + per-novel parse + `.txt` serialise + resumable state. Modes below. |
+| `scrape_from_catalogue.py` | Downloads only live URLs listed in `gl_catalog.json`; default newest→oldest, with `--forward` for oldest→newest. Does not follow prev/next links. Reuses `scraper.py` parsing, output, throttling, and run logs. |
 | `estimate_history.py` | **Catalogue builder / discovery.** Graph-crawls the whole GL catalogue (prev/next + recommendations) into `gl_catalog.json` + a report. Landing-pages only, no chapter download. |
+| `add_catalogue_fetch_status.py` | One-time/idempotent migration: adds `fetch_status: "ok"` to legacy catalogue entries that do not have a status. |
+| `analyze_catalogue_chains.py` | Partitions `gl_catalog.json` into strict reciprocal chains, then merges display segments across one shared 404 or trivial non-reciprocal intermediary while retaining inline break annotations. |
 | `inspect_urls.py` | Scans `output/**/*.txt` preambles → `url_map.json` (structured per-novel URL/date/prev/next data). Flags chain gaps. |
 | `report_size.py` | Disk-usage summary of `output/` (total, avg, per-month). |
 | `check_incomplete.py` | Scans output for `[页面获取失败]` placeholders → lists novels needing repair. |
@@ -123,6 +126,34 @@ catalogue graph using **prev + next + recommendation links** as edges.
   N oldest known novels (`--prime`).
 - Reports **missing segments**: chain breaks (a novel whose `上一篇` isn't in the
   set) and date-coverage gaps (>N empty days).
+
+The crawl exhausts all known `上一篇`/`下一篇` chain frontiers before using
+recommendations. Recommendations are explored breadth-first from a root, with
+the default maximum depth set by `RECOMMENDATION_BFS_DEPTH` near the top of
+`estimate_history.py` (overridable with `--recommendation-depth`).
+
+On resume from `gl_catalog.json`, startup uses the same reciprocal-chain
+partition as `analyze_catalogue_chains.py`. It requests only URLs marked
+`missing_from_catalogue`, then refreshes the newest live chain end once to
+discover uploads added since the previous run. Existing confirmed-404 entries
+are never requested. If a newly confirmed 404 is referenced by an existing
+older and/or newer live record, that boundary is considered represented and no
+ID probing is attempted. Same-shard ID probing is disabled by default
+(`--bridge-steps 0`) and must be explicitly enabled.
+
+`gl_catalog.json` persists request outcomes:
+- `fetch_status: "ok"` — live landing page.
+- `fetch_status: "not_found"` — confirmed 404; title/author/date/navigation are
+  `null`. Both `estimate_history.py` and `scrape_from_catalogue.py` skip these
+  URLs on later runs, preventing repeated 404 probes.
+- Live records harvested by the updated crawler also store
+  `recommendation_urls`, `recommendation_depth`, and
+  `recommendations_crawled`, allowing recommendation BFS to resume.
+
+The history report treats the JSON catalogue as authoritative: every non-null
+`prev_url` must be represented by either a live or confirmed-404 entry. Date
+gaps connected by a known chain path are suppressed because some old pages have
+upload dates inconsistent with their prev/next position.
 
 ---
 
@@ -243,9 +274,10 @@ both jittered.
 ```bash
 python3 inspect_urls.py                                   # refresh url_map.json from output/
 python3 estimate_history.py --seed-map url_map.json       # build gl_catalog.json (discovery)
-# then scrape; --backward bulk-walks newest→oldest, idempotent + resumable:
-python3 scraper.py --backward --workers 3
+# then download exactly the live catalogue URLs, newest→oldest by default:
+python3 scrape_from_catalogue.py --catalogue gl_catalog.json --workers 3
+# use --forward for oldest→newest
 python3 check_incomplete.py        # verify; then `scraper.py --repair` if needed
 ```
-(A future enhancement could drive `scraper.py` directly from `gl_catalog.json`
-instead of live chain-walking, fully decoupling discovery from download.)
+The original `scraper.py --backward/--forward` chain-walk modes remain available
+and unchanged.

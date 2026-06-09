@@ -153,7 +153,12 @@ def _classify(resp, exc) -> str:
 
 # ── HTTP fetch with retry/backoff ──────────────────────────────────────────────
 
-def fetch(session: cffi_requests.Session, url: str, max_retries: int = 4) -> cffi_requests.Response:
+def fetch(
+    session: cffi_requests.Session,
+    url: str,
+    max_retries: int = 4,
+    timeout: float = REQUEST_TIMEOUT,
+) -> cffi_requests.Response:
     """Fetch url with exponential backoff on CHALLENGED/ERROR.
 
     Raises FileNotFoundError on 404, RuntimeError after max_retries exhausted.
@@ -161,7 +166,7 @@ def fetch(session: cffi_requests.Session, url: str, max_retries: int = 4) -> cff
     for attempt in range(max_retries):
         resp = exc = None
         try:
-            resp = session.get(url, timeout=REQUEST_TIMEOUT, impersonate=IMPERSONATE)
+            resp = session.get(url, timeout=timeout, impersonate=IMPERSONATE)
         except Exception as e:
             exc = e
 
@@ -170,6 +175,8 @@ def fetch(session: cffi_requests.Session, url: str, max_retries: int = 4) -> cff
             return resp
         if verdict == NOT_FOUND:
             raise FileNotFoundError(f"404: {url}")
+        if attempt + 1 == max_retries:
+            break
 
         wait = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_MAX)
         log.warning(
@@ -280,8 +287,7 @@ def _parse_h1(h1_text: str) -> tuple[str, str, str]:
         status = m.group(1)
         text = text[: m.start()].strip()
     if "_" in text:
-        idx = text.rfind("_")
-        novel, author = text[:idx].strip(), text[idx + 1:].strip()
+        novel, author = (part.strip() for part in text.split("_", 1))
     else:
         novel, author = text, ""
     return novel, author, status

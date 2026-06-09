@@ -13,12 +13,14 @@ Why a graph crawl (not a linear 上一篇 walk):
     - prev/next walk each contiguous chain segment (both directions).
     - recommendations hop ACROSS deletion gaps to other segments.
     - a small same-shard id-probe bridges tiny same-day gaps.
-  We stop when the queue AND the recommendation pool are exhausted, or --budget
-  new novels are fetched.
+  Chain links are always exhausted before recommendation links are considered.
+  Recommendation links are then explored breadth-first up to
+  RECOMMENDATION_BFS_DEPTH.
 
 Resumable: --seed-map accepts a url_map.json (inspect_urls.py) or a prior
 gl_catalog.json; those novels seed the crawl (never re-fetched) and their
-prev/next frontiers are enqueued. The catalogue is saved incrementally.
+prev/next/recommendation frontiers are enqueued. Confirmed 404 URLs are stored
+in the catalogue and are never requested again.
 
 Usage:
     python estimate_history.py <start_url> [--budget N] [--delay 0.15] ...
@@ -47,9 +49,12 @@ log = logging.getLogger(__name__)
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
 
+from analyze_catalogue_chains import build_chains
 from scraper import fetch, parse_landing, step_url_id, _b62_to_int
 
 _DATE_RE = re.compile(r"(\d{4})年(\d{2})月(\d{2})日")
+RECOMMENDATION_BFS_DEPTH = 3
+PROBE_404_DELAY = 1.0
 
 
 # ── URL helpers ──────────────────────────────────────────────────────────────
@@ -109,12 +114,26 @@ def parse_date(upload_date: str | None) -> date | None:
         return None
 
 
-def record_of(url: str, m) -> dict:
+def normalize_title_author(title: str | None, author: str | None) -> tuple[str, str]:
+    """Recover combined 'title_author' values from legacy seed records."""
+    clean_title = (title or "").strip()
+    clean_author = (author or "").strip()
+    if not clean_author and "_" in clean_title:
+        clean_title, clean_author = (
+            part.strip() for part in clean_title.split("_", 1)
+        )
+    return clean_title, clean_author
+
+
+def record_of(url: str, m, recommendation_urls: set[str] | None = None,
+              recommendation_depth: int = 0) -> dict:
     category, shard, ident = parse_url_parts(url)
+    title, author = normalize_title_author(m.title, m.author)
     return {
         "url": url,
-        "title": m.title,
-        "author": m.author,
+        "fetch_status": "ok",
+        "title": title,
+        "author": author,
         "upload_date": m.upload_date,
         "category": category,
         "shard": shard,
@@ -123,6 +142,30 @@ def record_of(url: str, m) -> dict:
         "scheme": scheme_of(shard, ident or ""),
         "prev_url": m.prev_url,
         "next_url": m.next_url,
+        "recommendation_urls": sorted(recommendation_urls or ()),
+        "recommendation_depth": recommendation_depth,
+        "recommendations_crawled": True,
+    }
+
+
+def not_found_record(url: str) -> dict:
+    category, shard, ident = parse_url_parts(url)
+    return {
+        "url": url,
+        "fetch_status": "not_found",
+        "title": None,
+        "author": None,
+        "upload_date": None,
+        "category": category,
+        "shard": shard,
+        "id": ident,
+        "id_num": _b62_to_int(ident) if ident else None,
+        "scheme": scheme_of(shard, ident or ""),
+        "prev_url": None,
+        "next_url": None,
+        "recommendation_urls": [],
+        "recommendation_depth": None,
+        "recommendations_crawled": True,
     }
 
 
@@ -143,16 +186,31 @@ def adapt_seed_record(rec: dict) -> dict | None:
     inspect_urls.py url_map.json shape with 'source_url'+'source') into catalogue
     format. None if no usable URL."""
     if rec.get("url"):
-        return rec
+        out = dict(rec)
+        had_recommendations = "recommendation_urls" in out
+        out["title"], out["author"] = normalize_title_author(
+            out.get("title"),
+            out.get("author"),
+        )
+        out.setdefault("fetch_status", "ok")
+        out.setdefault("recommendation_urls", [])
+        out.setdefault("recommendation_depth", 0 if out["fetch_status"] == "ok" else None)
+        out.setdefault("recommendations_crawled", had_recommendations)
+        return out
     url = rec.get("source_url")
     if not url:
         return None
     src = rec.get("source") or {}
     shard, ident = src.get("shard"), src.get("id")
+    title, author = normalize_title_author(
+        rec.get("title"),
+        rec.get("author"),
+    )
     return {
         "url": url,
-        "title": rec.get("title", ""),
-        "author": rec.get("author", ""),
+        "fetch_status": "ok",
+        "title": title,
+        "author": author,
         "upload_date": rec.get("upload_date", ""),
         "category": src.get("category"),
         "shard": shard,
@@ -161,36 +219,81 @@ def adapt_seed_record(rec: dict) -> dict | None:
         "scheme": scheme_of(shard, ident or ""),
         "prev_url": rec.get("prev_url"),
         "next_url": rec.get("next_url"),
+        "recommendation_urls": [],
+        "recommendation_depth": 0,
+        "recommendations_crawled": False,
     }
 
 
 def write_catalog(path: str, records: list[dict]) -> int:
     by_url = {r["url"]: r for r in records}
-    catalog = sorted(by_url.values(), key=lambda r: r["upload_date"])
+    catalog = sorted(
+        by_url.values(),
+        key=lambda r: (
+            r.get("fetch_status") != "ok",
+            r.get("upload_date") or "",
+            r["url"],
+        ),
+    )
     with open(path, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
     return len(catalog)
 
 
-def bridge(session, dead_url, max_steps=30):
-    """Same-shard id-probe to cross a tiny (same-day) deletion gap. Returns
-    (live_url, steps_tried) or (None, steps_tried). Cross-day gaps are handled by
-    recommendations instead, so this budget is small."""
+def bridge(session, dead_url: str, records_by_url: dict[str, dict],
+           prefetched: dict[str, object], max_steps: int = 30,
+           delay: float = 0.15, on_not_found=None):
+    """Probe older IDs within one shard, persisting every confirmed 404.
+
+    A live response is cached so the caller does not request it twice.
+    """
     for k in range(1, max_steps + 1):
         cand = step_url_id(dead_url, -k)
         if cand is None:
             return None, k
+        known = records_by_url.get(cand)
+        if known:
+            if is_live_record(known):
+                return cand, k
+            continue
         try:
-            fetch(session, cand, max_retries=2)
+            resp = fetch(session, cand, max_retries=2)
+            prefetched[cand] = resp
             return cand, k
         except FileNotFoundError:
+            records_by_url[cand] = not_found_record(cand)
+            if on_not_found:
+                on_not_found()
+            time.sleep(max(delay, PROBE_404_DELAY))
             continue
         except Exception:
+            time.sleep(delay)
             continue
     return None, max_steps
 
 
 # ── Report ───────────────────────────────────────────────────────────────────
+
+def is_live_record(record: dict) -> bool:
+    return record.get("fetch_status", "ok") == "ok"
+
+
+def follows_chain(records_by_url: dict[str, dict], start_url: str, target_url: str,
+                  direction: str) -> bool:
+    """Return True if target is reachable through known prev/next links."""
+    field = "next_url" if direction == "next" else "prev_url"
+    seen: set[str] = set()
+    current = start_url
+    while current and current not in seen:
+        if current == target_url:
+            return True
+        seen.add(current)
+        record = records_by_url.get(current)
+        if not record or not is_live_record(record):
+            return False
+        current = record.get(field)
+    return False
+
 
 def build_report(records: list[dict], stop_reason: str, gaps: list[dict],
                  elapsed: float, avg_mb: float, gap_days: int = 7) -> str:
@@ -201,21 +304,29 @@ def build_report(records: list[dict], stop_reason: str, gaps: list[dict],
     p("52shuku GL catalogue — history report")
     p("=" * 70)
 
-    if not records:
+    records_by_url = {r["url"]: r for r in records}
+    live_records = [r for r in records if is_live_record(r)]
+    not_found_records = [r for r in records if not is_live_record(r)]
+
+    if not live_records:
         p("No novels recorded.")
+        p(f"Confirmed 404 URLs: {len(not_found_records)}")
         p(f"Walk wall-time    : {elapsed:.0f}s")
         p(f"Stop reason       : {stop_reason}")
         p("=" * 70)
         return "\n".join(lines)
 
-    by_date = sorted(records, key=lambda r: r["upload_date"])
+    by_date = sorted(live_records, key=lambda r: r.get("upload_date") or "")
     oldest, newest = by_date[0], by_date[-1]
 
-    p(f"Novels discovered : {len(records)}")
+    p(f"Catalogue entries : {len(records)}")
+    p(f"Live novels       : {len(live_records)}")
+    p(f"Confirmed 404 URLs: {len(not_found_records)}")
     p(f"Newest novel      : {newest['upload_date']}  {newest['title']}")
     p(f"Oldest novel      : {oldest['upload_date']}  {oldest['title']}")
 
-    ym_new, ym_old = year_month(newest["upload_date"]), year_month(oldest["upload_date"])
+    ym_new = year_month(newest.get("upload_date") or "")
+    ym_old = year_month(oldest.get("upload_date") or "")
     if ym_new and ym_old:
         months = (int(ym_new[0]) - int(ym_old[0])) * 12 + (int(ym_new[1]) - int(ym_old[1]))
         p(f"Span              : ~{months} months ({months/12:.1f} years)")
@@ -224,11 +335,10 @@ def build_report(records: list[dict], stop_reason: str, gaps: list[dict],
     p(f"Stop reason       : {stop_reason}")
     p("")
 
-    # Per-year counts
     p("Novels per year (by upload date):")
     per_year: dict[str, int] = {}
-    for r in records:
-        ym = year_month(r["upload_date"])
+    for r in live_records:
+        ym = year_month(r.get("upload_date") or "")
         if ym:
             per_year[ym[0]] = per_year.get(ym[0], 0) + 1
     for yr in sorted(per_year):
@@ -236,51 +346,94 @@ def build_report(records: list[dict], stop_reason: str, gaps: list[dict],
         p(f"  {yr}: {per_year[yr]:5d}  {bar}")
     p("")
 
-    # URL-scheme breakdown
     p("URL schemes:")
     per_scheme: dict[str, int] = {}
-    for r in records:
+    for r in live_records:
         per_scheme[r["scheme"]] = per_scheme.get(r["scheme"], 0) + 1
-    for sch, c in sorted(per_scheme.items(), key=lambda kv: -kv[1]):
-        p(f"  {sch:28s}: {c:5d}")
+    for sch, count in sorted(per_scheme.items(), key=lambda kv: -kv[1]):
+        p(f"  {sch:28s}: {count:5d}")
     p("")
 
-    # ── Missing segments / broken chains ─────────────────────────────────────
-    # A novel whose 上一篇 is not in our set marks the bottom edge of a found
-    # segment — i.e. older novel(s) are missing there. (The single global oldest
-    # is excluded: it legitimately points beyond what exists.)
-    found = {r["url"] for r in records}
-    oldest_url = oldest["url"]
-    breaks = [r for r in records
-              if r.get("prev_url") and r["prev_url"] not in found and r["url"] != oldest_url]
-    breaks.sort(key=lambda r: r["upload_date"])
-    p(f"Chain breaks (上一篇 missing → older novels not yet found): {len(breaks)}")
+    breaks = [
+        r for r in live_records
+        if r.get("prev_url") and r["prev_url"] not in records_by_url
+    ]
+    breaks.sort(key=lambda r: r.get("upload_date") or "")
+    p(f"Chain breaks (上一篇 missing from catalogue): {len(breaks)}")
     for r in breaks[:25]:
-        p(f"  {r['upload_date']}  {r['title'][:22]:22s}  → missing {r['prev_url']}")
+        p(f"  {r['upload_date']}  {(r['title'] or '')[:22]:22s}  → missing {r['prev_url']}")
     if len(breaks) > 25:
         p(f"  … and {len(breaks) - 25} more")
     p("")
 
-    # Date-coverage gaps: stretches with no novels at all.
-    dates = sorted(d for d in (parse_date(r["upload_date"]) for r in records) if d)
-    big = [(a, b, (b - a).days) for a, b in zip(dates, dates[1:]) if (b - a).days > gap_days]
-    p(f"Date-coverage gaps (>{gap_days} days with no novels): {len(big)}")
-    for a, b, d in big[:25]:
-        p(f"  {a} → {b}   ({d} days empty)")
-    if len(big) > 25:
-        p(f"  … and {len(big) - 25} more")
+    known_deletions = [
+        r for r in live_records
+        if r.get("prev_url")
+        and (prev := records_by_url.get(r["prev_url"]))
+        and not is_live_record(prev)
+    ]
+    known_deletions.sort(key=lambda r: r.get("upload_date") or "")
+    p(f"Known deleted 上一篇 links (recorded 404): {len(known_deletions)}")
+    for r in known_deletions[:25]:
+        p(f"  {r['upload_date']}  {(r['title'] or '')[:22]:22s}  → 404 {r['prev_url']}")
+    if len(known_deletions) > 25:
+        p(f"  … and {len(known_deletions) - 25} more")
     p("")
 
-    # Deletion gaps bridged in-shard
+    # Old pages sometimes carry upload dates inconsistent with chain order.
+    # Suppress a date gap when its boundaries are connected through the known
+    # next/prev chain, even if an intermediate record sorts to another year.
+    dated_records = sorted(
+        ((d, r) for r in live_records if (d := parse_date(r.get("upload_date")))),
+        key=lambda item: (item[0], item[1]["upload_date"], item[1]["url"]),
+    )
+    big = [
+        (before_date, after_date, (after_date - before_date).days, before, after)
+        for (before_date, before), (after_date, after)
+        in zip(dated_records, dated_records[1:])
+        if (after_date - before_date).days > gap_days
+        and not follows_chain(records_by_url, before["url"], after["url"], "next")
+        and not follows_chain(records_by_url, after["url"], before["url"], "prev")
+    ]
+    p(f"Date-coverage gaps (>{gap_days} days and no catalogue chain path): {len(big)}")
+    for before_date, after_date, days, before, after in big:
+        p(f"  {before_date} → {after_date}   ({days} days empty)")
+        p(f"    before: {before['upload_date']}  {before['title']}")
+        p(f"            {before['url']}")
+        p(f"    after : {after['upload_date']}  {after['title']}")
+        p(f"            {after['url']}")
+    p("")
+
+    dated_by_url = {
+        r["url"]: parse_date(r.get("upload_date"))
+        for r in live_records
+    }
+    inversions: list[tuple[dict, dict]] = []
+    for r in live_records:
+        next_record = records_by_url.get(r.get("next_url"))
+        if not next_record or not is_live_record(next_record):
+            continue
+        current_date = dated_by_url.get(r["url"])
+        next_date = dated_by_url.get(next_record["url"])
+        if current_date and next_date and next_date < current_date:
+            inversions.append((r, next_record))
+    p(f"Chain date inversions (下一篇 has an older upload date): {len(inversions)}")
+    for before, after in inversions[:25]:
+        p(f"  {before['upload_date']}  {before['url']}")
+        p(f"    → {after['upload_date']}  {after['url']}")
+    if len(inversions) > 25:
+        p(f"  … and {len(inversions) - 25} more")
+    p("")
+
     p(f"Same-shard gaps bridged: {len(gaps)}")
     if gaps:
-        for g in gaps[:10]:
-            p(f"  -{g['steps']:>3} at {g['dead']} → {g['live']}")
+        for gap in gaps[:10]:
+            p(f"  -{gap['steps']:>3} at {gap['dead']} → {gap['live']}")
         if len(gaps) > 10:
             p(f"  … and {len(gaps) - 10} more")
     p("")
 
-    est_gb = len(records) * avg_mb / 1024
+    est_gb = len(live_records) * avg_mb / 1024
     p(f"Estimated disk size: ~{est_gb:.1f} GB  (at {avg_mb:.1f} MB/novel avg)")
     p("=" * 70)
     return "\n".join(lines)
@@ -297,29 +450,98 @@ def main() -> int:
     ap.add_argument("--json", default="gl_catalog.json")
     ap.add_argument("--report", default="gl_catalog_report.txt")
     ap.add_argument("--avg-mb", type=float, default=1.2)
-    ap.add_argument("--bridge-steps", type=int, default=30, help="Same-shard id-probe budget per gap")
-    ap.add_argument("--prime", type=int, default=10, help="When seeding from a catalogue (no stored "
-                                                          "recommendations), harvest recs from this many oldest known novels")
+    ap.add_argument(
+        "--bridge-steps",
+        type=int,
+        default=0,
+        help="Optional same-shard ID probe budget after a confirmed 404 "
+             "(default: 0; disabled to avoid 404-heavy request bursts)",
+    )
+    ap.add_argument(
+        "--recommendation-depth",
+        type=int,
+        default=RECOMMENDATION_BFS_DEPTH,
+        help=f"Recommendation BFS depth (default: {RECOMMENDATION_BFS_DEPTH})",
+    )
+    ap.add_argument(
+        "--prime",
+        type=int,
+        default=1,
+        help="When a seed catalogue has no stored recommendation edges, use this "
+             "many oldest live novels as BFS roots (default: 1)",
+    )
     args = ap.parse_args()
 
     if not args.start_url and not args.seed_map:
         ap.error("provide a start_url or --seed-map")
+    if args.budget < 0:
+        ap.error("--budget must be 0 or greater")
+    if args.recommendation_depth < 0:
+        ap.error("--recommendation-depth must be 0 or greater")
+    if args.prime < 0:
+        ap.error("--prime must be 0 or greater")
 
     session = cffi_requests.Session()
-    records: list[dict] = []
-    visited: set[str] = set()       # fetched or known-dead URLs
+    records_by_url: dict[str, dict] = {}
     gaps: list[dict] = []
-    rec_pool: set[str] = set()      # recommendation URLs seen, not yet visited
-    queue: deque[str] = deque()     # chain frontier (prev/next edges)
+    chain_queue: deque[tuple[str, int, bool]] = deque()
+    recommendation_queue: deque[tuple[str, int]] = deque()
+    root_queue: deque[tuple[str, int]] = deque()
+    chain_scheduled: dict[str, int] = {}
+    recommendation_scheduled: dict[str, int] = {}
+    prefetched: dict[str, object] = {}
+    attempted_this_run: set[str] = set()
+    boundary_targets: set[str] = set()
+    refresh_targets: set[str] = set()
     fetched = 0
     t0 = time.monotonic()
-    stop_reason = "exhausted (chain + recommendations fully explored)"
+    stop_reason = "exhausted (chain first, then recommendation BFS)"
     rec_hops = 0
     interrupted = False
 
-    def enqueue(u: str | None) -> None:
-        if is_gl_landing_url(u) and u not in visited:
-            queue.append(u)
+    def checkpoint() -> None:
+        write_catalog(args.json, list(records_by_url.values()))
+
+    def enqueue_chain(u: str | None, depth: int, refresh: bool = False) -> None:
+        if not is_gl_landing_url(u):
+            return
+        known = records_by_url.get(u)
+        if known:
+            if not refresh or not is_live_record(known):
+                return
+        elif u in attempted_this_run:
+            return
+        previous_depth = chain_scheduled.get(u)
+        if previous_depth is not None and previous_depth <= depth:
+            return
+        chain_scheduled[u] = depth
+        chain_queue.append((u, depth, refresh))
+
+    def enqueue_recommendation(u: str | None, depth: int) -> None:
+        if depth > args.recommendation_depth or not is_gl_landing_url(u):
+            return
+        known = records_by_url.get(u)
+        if known and (not is_live_record(known) or known.get("recommendations_crawled")):
+            return
+        if not known and u in attempted_this_run:
+            return
+        previous_depth = recommendation_scheduled.get(u)
+        if previous_depth is not None and previous_depth <= depth:
+            return
+        recommendation_scheduled[u] = depth
+        recommendation_queue.append((u, depth))
+
+    def enqueue_record_edges(record: dict) -> None:
+        if not is_live_record(record):
+            return
+        depth = record.get("recommendation_depth")
+        if not isinstance(depth, int):
+            depth = 0
+        enqueue_chain(record.get("prev_url"), depth)
+        enqueue_chain(record.get("next_url"), depth)
+        if record.get("recommendations_crawled") and depth < args.recommendation_depth:
+            for url in record.get("recommendation_urls") or ():
+                enqueue_recommendation(url, depth + 1)
 
     try:
         # ── Seed ────────────────────────────────────────────────────────────
@@ -330,106 +552,238 @@ def main() -> int:
             for rec in raw:
                 a = adapt_seed_record(rec)
                 if a:
-                    records.append(a)
-                    visited.add(a["url"])
+                    records_by_url[a["url"]] = a
                     seeded += 1
             log.info("Seeded %d known novels from %s", seeded, args.seed_map)
-            for a in records:                   # enqueue chain frontiers of known set
-                enqueue(a.get("prev_url"))
-                enqueue(a.get("next_url"))
-            # Catalogue seeds carry no recommendations. Prime the rec pool by
-            # harvesting recs from the oldest known novels — most likely to point
-            # into the older territory beyond the chain break.
-            if args.prime and records:
-                oldest_known = sorted(records, key=lambda r: r["upload_date"])[:args.prime]
-                log.info("Priming recommendation pool from %d oldest known novels…", len(oldest_known))
-                for r in oldest_known:
-                    try:
-                        resp = fetch(session, r["url"], max_retries=2)
-                        for ru in parse_recommendations(resp.text, r["url"]):
-                            if ru not in visited:
-                                rec_pool.add(ru)
-                    except Exception:
-                        pass
-                    time.sleep(args.delay)
-                log.info("Primed recommendation pool: %d candidate(s)", len(rec_pool))
+
+            live_records = {
+                url: record
+                for url, record in records_by_url.items()
+                if is_live_record(record)
+            }
+            chains = build_chains(records_by_url, live_records)
+            for chain in chains:
+                for side in ("start", "end"):
+                    boundary_info = chain[f"{side}_boundary"]
+                    if boundary_info["kind"] == "missing_from_catalogue":
+                        target = boundary_info["target_url"]
+                        boundary_targets.add(target)
+                        enqueue_chain(target, 0)
+
+            # The newest chain end legitimately has next_url=null today, but it
+            # may gain a next link after new uploads. Refresh it once per run.
+            newest_chain_end = max(
+                (
+                    chain["end"]
+                    for chain in chains
+                    if chain["end_boundary"]["kind"] == "chain_end"
+                ),
+                key=lambda record: (record.get("upload_date") or "", record["url"]),
+                default=None,
+            )
+            if newest_chain_end:
+                refresh_targets.add(newest_chain_end["url"])
+                enqueue_chain(newest_chain_end["url"], 0, refresh=True)
+                log.info("Will refresh newest chain end: %s", newest_chain_end["url"])
+
+            log.info(
+                "Analysed %d chain(s): queued %d missing boundary URL(s)",
+                len(chains),
+                len(boundary_targets),
+            )
+
+            if args.prime:
+                uncrawled = sorted(
+                    (
+                        r for r in records_by_url.values()
+                        if is_live_record(r) and not r.get("recommendations_crawled")
+                    ),
+                    key=lambda r: (r.get("upload_date") or "", r["url"]),
+                )
+                for record in uncrawled[:args.prime]:
+                    root_queue.append((record["url"], 0))
+                    refresh_targets.add(record["url"])
+                if root_queue:
+                    log.info(
+                        "Queued %d known novel(s) as recommendation BFS root(s)",
+                        len(root_queue),
+                    )
         if args.start_url:
-            enqueue(args.start_url.strip())
+            start_url = args.start_url.strip()
+            if start_url in records_by_url:
+                root_queue.appendleft((start_url, 0))
+                enqueue_record_edges(records_by_url[start_url])
+            else:
+                enqueue_chain(start_url, 0)
 
-        log.info("Crawl start: %d queued frontier(s), %d seeded, budget=%d new",
-                 len(queue), len(records), args.budget)
+        log.info(
+            "Crawl start: %d chain frontier(s), %d recommendation candidate(s), "
+            "%d catalogue entries, budget=%d new, recommendation depth=%d",
+            len(chain_queue),
+            len(recommendation_queue),
+            len(records_by_url),
+            args.budget,
+            args.recommendation_depth,
+        )
 
-        while fetched < args.budget:
-            if not queue:
-                # Chain frontier drained — hop across a gap via a recommendation.
-                nxt = None
-                while rec_pool:
-                    cand = rec_pool.pop()
-                    if cand not in visited:
-                        nxt = cand
-                        break
-                if nxt is None:
+        while True:
+            if not chain_queue:
+                while root_queue and not chain_queue:
+                    root_url, root_depth = root_queue.popleft()
+                    enqueue_chain(root_url, root_depth, refresh=True)
+                    if chain_queue:
+                        log.info("Chain exhausted; harvesting BFS root %s", root_url)
+
+                while recommendation_queue and not chain_queue:
+                    rec_url, rec_depth = recommendation_queue.popleft()
+                    if recommendation_scheduled.get(rec_url) != rec_depth:
+                        continue
+                    rec_hops += 1
+                    known = records_by_url.get(rec_url)
+                    enqueue_chain(
+                        rec_url,
+                        rec_depth,
+                        refresh=bool(known and is_live_record(known)),
+                    )
+                    if chain_queue:
+                        log.info(
+                            "Chain exhausted; recommendation BFS hop #%d depth=%d → %s "
+                            "(%d queued)",
+                            rec_hops,
+                            rec_depth,
+                            rec_url,
+                            len(recommendation_queue),
+                        )
+
+                if not chain_queue:
                     break
-                rec_hops += 1
-                log.info("Chain drained — recommendation hop #%d → %s (pool: %d left)",
-                         rec_hops, nxt, len(rec_pool))
-                queue.append(nxt)
+
+            cur, depth, refresh = chain_queue.popleft()
+            if chain_scheduled.get(cur) != depth:
                 continue
 
-            cur = queue.popleft()
-            if cur in visited:
+            known = records_by_url.get(cur)
+            if known and (not refresh or not is_live_record(known)):
                 continue
+            if not known and fetched >= args.budget:
+                stop_reason = f"budget exhausted ({args.budget} new novels)"
+                break
 
+            attempted_this_run.add(cur)
+            was_known = known is not None
             try:
-                resp = fetch(session, cur, max_retries=3)
+                resp = prefetched.pop(cur, None)
+                if resp is None:
+                    # Missing chain boundaries are checked once per run. Long
+                    # exponential retries make a transient error look like a
+                    # stall and can amplify rate limiting.
+                    single_attempt = cur in boundary_targets or cur in refresh_targets
+                    max_retries = 1 if single_attempt else 3
+                    timeout = 8 if single_attempt else 20
+                    resp = fetch(
+                        session,
+                        cur,
+                        max_retries=max_retries,
+                        timeout=timeout,
+                    )
             except FileNotFoundError:
-                visited.add(cur)
-                bridged, tried = bridge(session, cur, max_steps=args.bridge_steps)
-                if bridged and bridged not in visited:
-                    gaps.append({"dead": cur, "live": bridged, "steps": tried})
-                    queue.append(bridged)
-                    log.warning("404 gap at %s; bridged -%d to %s", cur, tried, bridged)
+                records_by_url[cur] = not_found_record(cur)
+                checkpoint()
+                older_refs = [
+                    r["url"] for r in records_by_url.values()
+                    if is_live_record(r) and r.get("next_url") == cur
+                ]
+                newer_refs = [
+                    r["url"] for r in records_by_url.values()
+                    if is_live_record(r) and r.get("prev_url") == cur
+                ]
+                accounted_for = bool(older_refs or newer_refs)
+                log.warning(
+                    "404 recorded in catalogue: %s (older-side refs=%d, newer-side refs=%d)",
+                    cur,
+                    len(older_refs),
+                    len(newer_refs),
+                )
+                if older_refs:
+                    log.info("404 older-side chain endpoint(s): %s", ", ".join(older_refs))
+                if newer_refs:
+                    log.info("404 newer-side chain endpoint(s): %s", ", ".join(newer_refs))
+                if accounted_for:
+                    log.info("404 boundary is represented by existing catalogue links; no ID probe.")
+                elif args.bridge_steps:
+                    bridged, tried = bridge(
+                        session,
+                        cur,
+                        records_by_url,
+                        prefetched,
+                        max_steps=args.bridge_steps,
+                        delay=args.delay,
+                        on_not_found=checkpoint,
+                    )
+                    if bridged:
+                        gaps.append({"dead": cur, "live": bridged, "steps": tried})
+                        enqueue_chain(bridged, depth)
+                        log.warning("404 gap at %s; bridged -%d to %s", cur, tried, bridged)
                 continue
             except Exception:
-                visited.add(cur)
-                log.exception("Error fetching %s; skipping", cur)
+                log.exception("Error fetching %s; leaving it unconfirmed for a future run", cur)
                 continue
 
-            visited.add(cur)
             m = parse_landing(resp.text, cur)
-            records.append(record_of(cur, m))
-            fetched += 1
+            recommendation_urls = parse_recommendations(resp.text, cur)
+            record = record_of(cur, m, recommendation_urls, depth)
+            records_by_url[cur] = record
+            if not was_known:
+                fetched += 1
 
-            enqueue(m.prev_url)
-            enqueue(m.next_url)
-            for ru in parse_recommendations(resp.text, cur):
-                if ru not in visited:
-                    rec_pool.add(ru)
+            enqueue_record_edges(record)
 
-            rate = fetched / (time.monotonic() - t0)
-            log.info("[+%5d | %6d total] %s  %s  (%.1f/s, q=%d, rec=%d)  %s",
-                     fetched, len(records), m.upload_date, m.title[:34], rate,
-                     len(queue), len(rec_pool), cur)
+            rate = fetched / max(time.monotonic() - t0, 0.001)
+            log.info(
+                "[+%5d | %6d live, %5d 404] depth=%d  %s  %s  "
+                "(%.1f/s, chain=%d, rec=%d)  %s",
+                fetched,
+                sum(is_live_record(r) for r in records_by_url.values()),
+                sum(not is_live_record(r) for r in records_by_url.values()),
+                depth,
+                m.upload_date,
+                m.title[:34],
+                rate,
+                len(chain_queue),
+                len(recommendation_queue),
+                cur,
+            )
 
-            if fetched % 200 == 0:
-                write_catalog(args.json, records)
+            if fetched and fetched % 200 == 0:
+                checkpoint()
 
             time.sleep(args.delay)
-        else:
-            stop_reason = f"budget exhausted ({args.budget} new novels)"
     except KeyboardInterrupt:
         interrupted = True
         stop_reason = f"keyboard interrupt ({fetched} new novels fetched this run)"
-        log.warning("Interrupted; writing %d collected novel(s) and report", len(records))
+        log.warning(
+            "Interrupted; writing %d collected catalogue entries and report",
+            len(records_by_url),
+        )
+    finally:
+        session.close()
 
     elapsed = time.monotonic() - t0
+    records = list(records_by_url.values())
     n_catalog = write_catalog(args.json, records)
     report = build_report(records, stop_reason, gaps, elapsed, args.avg_mb)
     with open(args.report, "w", encoding="utf-8") as f:
         f.write(report + "\n")
 
-    log.info("Crawl finished: +%d new this run, %d total in %.1fs, %d recommendation hops (%s)",
-             fetched, n_catalog, elapsed, rec_hops, stop_reason)
+    log.info(
+        "Crawl finished: +%d live this run, %d catalogue entries in %.1fs, "
+        "%d recommendation hops (%s)",
+        fetched,
+        n_catalog,
+        elapsed,
+        rec_hops,
+        stop_reason,
+    )
     print("\n" + report, flush=True)
     print(f"\nCanonical list → {args.json}  ({n_catalog} novels)", flush=True)
     print(f"Report         → {args.report}", flush=True)

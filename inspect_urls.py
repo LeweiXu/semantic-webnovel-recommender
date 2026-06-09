@@ -85,6 +85,7 @@ def parse_preamble(path: Path) -> dict:
     return {
         "file": str(path),
         "title": _field(lines, "标题："),
+        "author": _field(lines, "作者："),
         "upload_date": _field(lines, "上传时间："),
         "source_url": source,
         "source": parse_url(source),

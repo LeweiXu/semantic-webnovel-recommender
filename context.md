@@ -1,155 +1,251 @@
 # Project Context — 52shuku.net GL Novel Scraper
 
-> Briefing for an agentic coding assistant (e.g. Claude Code). Read this fully
-> before writing or changing code. It records the objective, the site's
-> structure, what we've confirmed, and — critically — **approaches that do NOT
-> work**, so they aren't re-attempted.
+> Briefing for an agentic coding assistant. Read this fully before changing
+> code. It records the objective, the confirmed site structure, the tooling we
+> built, hard-won gotchas, and — critically — **approaches that do NOT work**, so
+> they aren't re-attempted.
 
 ## Objective
 
 Scrape **all GL (百合) novels** from `https://www.52shuku.net/` for personal
-offline reading, and output each novel in multiple formats:
+offline reading.
 
-- `.epub` (primary)
-- `.txt` (plain text)
-- `.md` (Markdown, with embedded image links as `![](url)` where images exist)
+- **Built & working:** `.txt` output (one file per novel, with a metadata
+  preamble + chapter-segmented body).
+- **Not yet built (future):** `.epub` and `.md` serialisers. A common in-memory
+  novel representation already exists (see `ScrapedNovel` / `NovelMeta`) to build
+  these on later.
 
-The pipeline has two phases that are **interleaved**, not sequential (see
-"Discovery strategy" below):
+Stack: **Python**, `curl_cffi` (browser-impersonating HTTP, NOT `requests`),
+`BeautifulSoup` + `lxml`. Encoding is **UTF-8** throughout (no GB18030 dance).
 
-1. **Discovery** — find every GL novel URL.
-2. **Scraping** — for each novel, fetch all its pages, assemble text/images,
-   and serialise to the three output formats.
+---
 
-Language/stack: **Python** (preferred). Use `requests` + `lxml`/`BeautifulSoup`.
-EPUB assembly via `ebooklib` (or hand-rolled zip if preferred).
+## What we've built (file inventory)
+
+| File | Purpose |
+|------|---------|
+| `scraper.py` | The scraper. Chain-walk + per-novel parse + `.txt` serialise + resumable state. Modes below. |
+| `estimate_history.py` | **Catalogue builder / discovery.** Graph-crawls the whole GL catalogue (prev/next + recommendations) into `gl_catalog.json` + a report. Landing-pages only, no chapter download. |
+| `inspect_urls.py` | Scans `output/**/*.txt` preambles → `url_map.json` (structured per-novel URL/date/prev/next data). Flags chain gaps. |
+| `report_size.py` | Disk-usage summary of `output/` (total, avg, per-month). |
+| `check_incomplete.py` | Scans output for `[页面获取失败]` placeholders → lists novels needing repair. |
+| `probe_rate_limit.py` | One-shot rate-limit characterisation. Already run. |
+| `state.json` | Resumable state (atomic-written + `.bak`): `oldest_url`, `newest_url`, `scraped[]`. |
+| `gl_catalog.json` | Canonical novel list from `estimate_history.py` (oldest-first). |
+| `url_map.json` | Per-downloaded-novel URL data from `inspect_urls.py`. |
+
+### `scraper.py` modes
+- `--seed URL` — scrape one novel, initialise `state.json`.
+- `--backward` — walk `上一篇` from `oldest_url` (the main bulk direction: newest→oldest).
+- `--forward` — walk `下一篇` from `newest_url` (catch novels newer than the seed).
+- `--resume URL` — with `--forward/--backward`: start the walk AT this URL (inclusive). Manual bridge across an unrecoverable break.
+- `--get URL` — download a single novel into `--output` (flat, no month dir, overwrites). No state change. For one-offs / re-downloads.
+- `--repair` — re-download every novel under `--output` that has failed-page placeholders.
+- Common flags: `--limit N`, `--output DIR`, `--workers N` (parallel page fetch; default 1), `--verbose` (per-page log on its own line vs in-place).
+
+---
 
 ## Site structure (confirmed)
 
-- Novel landing page URL shape: `/{category}/{shard}/{id}.html`
-  - Example GL: `https://www.52shuku.net/gl/06_b/bkec8.html`
-  - `{category}` = genre folder (`gl`, `yanqing`, `xiandaidushi`, `bl`, ...)
-  - `{shard}` = bucket like `04_b`, `06_b`, `07_b` (directory sharding)
-  - `{id}` = short **base62** code (`0-9A-Za-z`), e.g. `bkec8`, `bkecR`
-- Novel reading pages: `{id}_2.html`, `{id}_3.html`, ... The landing page
-  lists all of them explicitly (开始阅读 / 第N页 links). No need to guess.
-- Each novel landing page has navigation:
-  - **上一篇** = previous novel (chronologically older upload)
-  - **下一篇** = next novel (chronologically newer upload)
-- **CONFIRMED by the user:** 上一篇 always leads to the previous GL novel in
-  upload-time order. This makes the linked-list chain walk reliable for full
-  coverage.
-- Encoding: **UTF-8** (confirmed — sitemap and pages are clean UTF-8). Unlike
-  the sister site jjwxc.net which is GB18030, we do NOT need special decoding.
+### URL shapes — there are THREE schemes across history
+The chain/crawl handles all of them transparently because each page hands us the
+literal prev/next/recommendation URLs.
 
-### ID scheme history (important)
-The base62 counter is **global across all categories** (a new novel in any
-genre takes the next ID, then lands in its own category folder). The
-`{shard}/{base62}.html` scheme is **recent**. Older novels use different URL
-shapes seen in recommendation lists, e.g. `/gl/12764.html`, `/gl/hvsq.html`,
-`/bl/27.html`. The chain walk handles all schemes transparently because each
-page hands us the literal next URL.
+- **Modern (~2024 →):** `/gl/{DD}_b/{base62}.html` e.g. `/gl/07_b/bkecS.html`.
+  **`{DD}_b` is the upload DAY-OF-MONTH**, reused every month (so `/gl/04_b/`
+  holds everything uploaded on the 4th of *any* month). This is NOT a hash bucket.
+- **Mid (~2020–2023):** `/gl/b/{base62}.html` e.g. `/gl/b/bjPxp.html`. Single
+  shard letter `b`; all novels of the era share it.
+- **Old (~2018–2020):** `/gl/{base62}.html` single-level e.g. `/gl/hqNo.html`,
+  and oldest numeric `/gl/12764.html`.
 
-## Discovery strategy — DECIDED
+### IDs
+`{base62}` uses alphabet **`0-9A-Za-z`** (verified: `bkdXU-1 = bkdXT`,
+`bkdXU+3 = bkdXX`, matching real prev/next links). The counter is **global
+across all categories** (gl/bl/yanqing/…), so consecutive GL IDs are
+**non-contiguous** — gaps of +2…+100+ are other categories' novels. Decoding an
+ID to an int is only useful for local stepping, not for counting GL novels.
 
-**Interleaved chain walk via 上一篇 (previous).**
+### Landing page selectors (`parse_landing`)
+- Title+author+status: `h1.article-title` → text like `冷淡学霸与可爱小猫_宋叙彦【完结】`.
+  Parse: strip `【…】` (status), then split on last `_` → (title, author).
+- Upload date: `time.muted` (e.g. `2026年06月06日 16:26:16`).
+- Chapter/reading pages: `ul.list li.mulu a` → `{id}_2.html`, `_3.html`, …
+  (the "开始阅读" link duplicates `_2`; de-dup by href). **Do not assume pages
+  start at `_2`** — read the listed hrefs.
+- Prev/next: `nav.article-nav span.article-nav-prev a` / `span.article-nav-next a`
+  (absolute hrefs). 下一篇 on the newest novel points to `index.html` (stop signal).
+- **Recommendations:** `div.relates a[href]` (≈10 links to OTHER GL novels in
+  other shards/days). `div.related_posts` also contains `/zuozhe/` author links —
+  filter to `/gl/` landing pages only. **These are the key to crossing gaps**
+  (see Discovery).
 
-Start from a recent known GL novel and follow **上一篇** backwards through the
-entire GL catalogue (newest → oldest). Do NOT collect all URLs first and then
-scrape — instead **scrape each novel as we reach it**, then follow its 上一篇
-link to the next one. The chain *is* the work queue.
+### Chapter ("page") structure (`parse_chapter_page`)
+- Text container: `article.article-content` (also `id="nr1"`); story is `<p>` tags.
+- A "page" (`_N.html`) is a fixed word-count slice, **not** a chapter. Real
+  chapters are marked by paragraphs matching `第[\d一二三…]+章` (`CHAPTER_RE`),
+  which can appear anywhere mid-page. We concatenate all pages, then split on
+  those markers; the `═`×40 divider is inserted at each `第N章`.
+  - Some novels have **no** `第N章` markers (logged as `0章`) → saved as one block.
+- **Ad/promo injection** lives in plain `<p>` tags with no special class, usually
+  at the page end: "哦豁…记得收藏网址 https://www.52shuku.net/…", "传送门：…".
+  Stripped by substring match against `AD_PATTERNS`
+  (`52书库`, `52shuku`, `传送门：`, `记得收藏网址`, `推荐给朋友`, `如果觉得52`).
 
-- **The URL is the resume/stop indicator.** Maintain a record (e.g. a
-  checkpoint file or a per-novel output file named by id) of what's been
-  scraped. To resume after interruption: start from the last-scraped novel's
-  上一篇 link, or skip novels whose output already exists.
-- **Stop condition:** when a novel has no 上一篇 link, or the 上一篇 link points
-  outside `/gl/`. **Log and pause at this boundary** for human eyeballing
-  rather than assuming — we have not empirically verified the exact oldest-novel
-  endpoint, and the old-ID-scheme region is unverified territory.
-- Forward direction (下一篇) is only needed to catch novels newer than the seed;
-  seed from the current newest if you want everything.
+---
+
+## Discovery strategy — what works
+
+### 1. Chain walk (`scraper.py --backward/--forward`)
+Follow `上一篇`/`下一篇` links, scraping each novel as reached. Reliable **within
+a contiguous segment**. `state.json["scraped"]` is a set used as a **loop guard**
+(the ~Nov-2020 origin cluster's prev-links form a cycle; revisiting a scraped URL
+terminates the walk cleanly).
+
+### 2. Same-shard bridge (deletion gaps)
+When a `上一篇/下一篇` 404s (novel deleted, neighbours not relinked), probe
+`PROBE_BUDGET=150` id-steps **within the same shard prefix** to find the next
+live novel, then **verify** its reverse link points back into the probed gap
+before auto-continuing. Works in the **mid `/gl/b/` era** (one shared shard).
+
+### 3. Graph crawl (`estimate_history.py`) — the robust full-catalogue method
+The chain alone **cannot cross a deletion gap in the modern `/gl/DD_b/` scheme**:
+the shard is the upload *day*, so the chronological predecessor lives in a
+*different* shard and an in-shard probe can never reach it. Solution: BFS the
+catalogue graph using **prev + next + recommendation links** as edges.
+- prev/next walk each contiguous segment both directions.
+- recommendations (`div.relates`, which point to other shards/days) **hop across
+  gaps** to disconnected segments. The rec pool snowballs (~+7/page).
+- A small same-shard bridge still crosses tiny same-day gaps.
+- Seedable/resumable via `--seed-map url_map.json | gl_catalog.json`; a catalogue
+  seed has no stored recs, so it **primes** the pool by harvesting recs from the
+  N oldest known novels (`--prime`).
+- Reports **missing segments**: chain breaks (a novel whose `上一篇` isn't in the
+  set) and date-coverage gaps (>N empty days).
+
+---
 
 ## What does NOT work (do not re-attempt)
 
-1. **Paginated index `/gl/index_N.html` (pages 1–80).** Only a *curated, recent*
-   list. Page 80 bottoms out around 2025 uploads; novels older than that are
-   NOT reachable via the index. ❌ Not complete.
-2. **`sitemap.xml`.** It's a rolling *"recently updated"* feed for search
-   engines (`changefreq=daily`), NOT an archive. Empirically: only **491 total
-   URLs** site-wide, of which **50 are GL**, all very recent (June 2026 era).
-   ❌ Not complete. (`sitemap_index.xml` returns 404.)
-3. **`/so/` search endpoint.** Disallowed by robots.txt (`Disallow: /so/`), and
-   query-string URLs are blocked too (`Disallow: /*?*`). ❌ Off-limits + blocked.
-4. **Exhaustive base62 sweep of a shard's ID range.** Fails for two reasons:
-   (a) IDs are *global across categories*, so most IDs in any range belong to
-   other genres and 404 under `/gl/` → huge wasted/disrespectful request volume
-   and a 404-heavy pattern that looks like abuse; (b) it only covers the modern
-   `NN_b` scheme and **misses the entire old-ID back-catalogue** — the exact
-   novels we're trying to reach. ❌ Incomplete + impolite. (May have niche use
-   as gap-fill *within an already-confirmed* shard range, but not as primary.)
+1. **Paginated index `/gl/index_N.html`.** Curated recent list only; bottoms out
+   ~2025. ❌ Incomplete.
+2. **`sitemap.xml`.** Rolling "recently updated" feed (~491 URLs site-wide, ~50
+   GL, all recent). `sitemap_index.xml` 404s. ❌ Incomplete.
+3. **`/so/` search.** Disallowed by robots.txt; query strings (`/*?*`) blocked too. ❌ Off-limits.
+4. **Exhaustive base62 sweep.** Global IDs → mostly other-category 404s (looks
+   like abuse) and misses old schemes. ❌ Impolite + incomplete.
+5. **In-shard id-bridge across a MODERN-scheme gap.** Because the shard is the
+   upload day, decrementing the id within one `/gl/DD_b/` shard only finds novels
+   from the *same day* — it can never reach a predecessor uploaded on another day.
+   Use **recommendations** (graph crawl) to cross modern-era gaps. ❌ Structural dead-end.
 
-## robots.txt — how to behave
+---
 
-- `/gl/` is **allowed** under `User-agent: *`. We're within the rules.
-- Honor these disallows: `/e/*`, `/*?*` (no query strings), `/d/*`, `/so/*`,
+## Anti-bot, throttling, politeness
+
+### Cloudflare classification (`_classify`)
+Sniff the **body**, not just the status code.
+- **`__CF$cv$params` and `challenge-platform` are injected into EVERY real page**
+  (standard CF JS fingerprinting) — they are NOT block signals. Do not treat them as challenges.
+- Real content markers (`小说简介`, `上一篇`, `下一篇`, `article-content`) → `OK`.
+- Hard-block markers (only on interstitial pages): `Just a moment`,
+  `cf-browser-verification`, `Attention Required` → `CHALLENGED`.
+- HTTP 429 → `RATE_LIMITED`. An exception/no-response (reset/timeout) → `ERROR`
+  (a *harder* throttle than 429: the server hung up). Genuine 404 → `NOT_FOUND`.
+
+### Transport: `curl_cffi` with browser impersonation
+Plain `requests` gets a CF JS challenge injected and trips detection. `curl_cffi`
+with `impersonate=IMPERSONATE` (TLS/HTTP2 fingerprint) sails through.
+- **GOTCHA:** `IMPERSONATE` must be a target your installed `curl_cffi` supports.
+  Dev env had 0.15 (`chrome136`); the runtime venv (`LOG-venv`) has **0.7.4**,
+  whose newest is **`chrome124`**. Mismatch → instant `ImpersonateError` on every
+  request (looks like a total failure). Current value: **`chrome124`**.
+
+### Measured throttle & observed behaviour
+Probe result: clean down to 0.5s delay; **bursts of ~80 requests fine**; the site
+tolerates ~10 req/s for minutes. In practice the scraper uses
+`DELAY_CHAPTER=0.1s` (within a novel) and `DELAY_NOVEL=2.0s` (between novels),
+both jittered.
+- On very long novels (200–600 pages) or under concurrent load you'll
+  occasionally see `RATE_LIMITED` then `ERROR`. **A single 5s backoff has always
+  been enough to recover** — we've never needed more than one retry. `BACKOFF_BASE=5s`,
+  `BACKOFF_MAX=60s`, `max_retries=4`.
+- Be a good citizen: single-threaded by default, jittered delays, checkpoint
+  after every novel.
+
+### robots.txt
+- `/gl/` is **allowed**. Honor disallows: `/e/*`, `/*?*`, `/d/*`, `/so/*`,
   `/templets`, `/404.html`, `/bookcase.html`, `/skin/52shuku/js/*`.
-- The file blocks named AI/SEO bots (ClaudeBot, GPTBot, CCBot, Bytespider,
-  AhrefsBot, Baiduspider, etc.) with `Disallow: /`. Use an honest generic
-  browser-like User-Agent; do not impersonate those named bots, and do not
-  impersonate Googlebot.
-- `Content-Signal: ai-train=no` is declared (EU Copyright Directive Art. 4 TDM
-  opt-out). This is **personal offline reading, not AI training** — but it
-  signals a rights-conscious operator, so keep impact minimal and personal.
+- Named AI/SEO bots (ClaudeBot, GPTBot, …) are `Disallow: /`. Use an honest
+  generic browser UA; do NOT impersonate those bots or Googlebot.
+- `Content-Signal: ai-train=no` is declared. This is **personal offline reading,
+  not AI training** — keep impact minimal.
 
-## Anti-bot reality (Cloudflare)
+---
 
-The site is behind **Cloudflare**. A blocked/missing request may NOT be a clean
-404 — it can be HTTP 403/503 (or even 200) with a challenge body containing
-`__CF$cv$params`, `challenge-platform`, or `Just a moment`, or a
-timeout/reset. **Classify responses by sniffing the body, not just the status
-code.** Distinguish:
-- genuine 404 (real missing page),
-- Cloudflare challenge (back off + retry, do NOT treat as "end of chain"),
-- 429 rate-limit (back off hard).
+## Output format & data model
 
-Plain `curl`/`requests` got through for static files (robots.txt, sitemap.xml,
-novel pages) in manual testing, so a browser engine may not be required — but
-keep Playwright as a fallback if challenges escalate during a long run.
+`output/{YYYY-MM}/{title}_{author}_{status}.txt` — month dir is from the novel's
+**upload** date. Preamble then `═`×40-separated chapters:
 
-## Politeness / throttling — REQUIRED
+```
+标题：冷淡学霸与可爱小猫
+作者：宋叙彦
+状态：完结
+上传时间：2026年06月06日 16:26:16
+章节数：11
+完整性：完整                ← or "缺失N页（见正文 [页面获取失败]）"
+抓取时间：2026-06-07T15:41:22Z
 
-This is a long job (hundreds–thousands of novels × multiple pages each). Be a
-good citizen:
-- **Randomized delay** between requests (jitter, not a fixed period).
-- **Exponential backoff** on any CHALLENGED / 429 / error response.
-- **Checkpoint after every novel** so the job is resumable and never re-fetches.
-- Single-threaded / low concurrency. Do not parallelise aggressively.
-- Run `probe_rate_limit.py` ONCE to characterise the safe request rate, then
-  record the recommended delay HERE:
+上一篇：<title>
+        URL:  <url>
+        文件: <filename.txt>
+下一篇：<title>
+        URL:  <url>
+        文件: <filename.txt>
+来源：<this novel's URL>
 
-  > **Measured safe throttle:** 1.0s between requests (~60 req/min). All 50
-  > requests clean through the full ramp (5s → 3s → 2s → 1s → 0.5s delay).
-  > curl_cffi / chrome136 impersonation; no challenges triggered. Use 1.0s
-  > base delay + jitter + exponential backoff on CHALLENGED/429.
+════════════…
+第1章
+<text>
+════════════…
+第2章
+...
+```
 
-## Current status / next steps
+### Resumability & integrity
+- `state.json` is **atomically** written (temp + `os.replace`, keeps `.bak`;
+  `load_state` falls back to `.bak` if the main file is corrupt). Holds
+  `oldest_url`, `newest_url`, and `scraped[]` (all complete novels — the loop guard).
+- **Partial novels:** a chapter page that fails after retries leaves a
+  `[页面获取失败: url]` placeholder; the preamble `完整性` line records it; the
+  novel is logged to `incomplete.log` and **kept out of `scraped[]`** so it's
+  re-fetched. `scraper.py --repair` re-downloads all such files.
+- Idempotent: a COMPLETE existing file is skipped; an incomplete one is re-fetched.
 
-- [x] Decoded URL structure and ID scheme.
-- [x] Ruled out index, sitemap, search, and base62-sweep as discovery methods.
-- [x] Confirmed chain walk (上一篇) reaches full catalogue; confirmed UTF-8.
-- [x] Wrote `probe_rate_limit.py` (rate-limit characterisation).
-- [x] **Run `probe_rate_limit.py`; record safe delay above.**
-- [ ] Build the interleaved chain-walk scraper:
-      seed → scrape novel (all `_N.html` pages) → serialise epub/txt/md →
-      checkpoint → follow 上一篇 → repeat; pause+log at chain boundary.
-- [ ] Build the per-novel parser: extract title/author/status from landing
-      page; extract chapter text + images from reading pages; strip site
-      chrome (nav, recommendation lists, footer).
-- [ ] Build the three serialisers (epub / txt / md-with-image-links) over a
-      common in-memory novel representation.
+---
 
-## Files
+## Catalogue facts (measured / estimated)
 
-- `probe_rate_limit.py` — safe, ramping rate-limit probe. Run once.
-- `context.md` — this file.
+- **Span:** ~**Oct 2018 → present** (≈ 5.5+ years). A recommendation hop reached
+  2018 novels; the chain alone had only reached ~2020 before.
+- **The ~Nov-2020 origin region is a tangled bulk-import cluster whose prev-links
+  loop** — handled by the loop guard / `visited` set; don't expect a clean single start.
+- **Upload rate grows over time:** ~2/day (2020–21) → ~4–5/day (2023–26).
+- **Total novels:** order **~7,000** (the 2023→2026 stretch is the bulk).
+- **Size:** recent novels avg ~1.0 MB (≈115 pages); older novels run larger
+  (200–600 pages). Blended **~8–10 GB** total. (`check_incomplete.py` reported 0
+  incomplete across ~2,147 downloaded so far.)
+
+## Suggested workflow for a full build
+
+```bash
+python3 inspect_urls.py                                   # refresh url_map.json from output/
+python3 estimate_history.py --seed-map url_map.json       # build gl_catalog.json (discovery)
+# then scrape; --backward bulk-walks newest→oldest, idempotent + resumable:
+python3 scraper.py --backward --workers 3
+python3 check_incomplete.py        # verify; then `scraper.py --repair` if needed
+```
+(A future enhancement could drive `scraper.py` directly from `gl_catalog.json`
+instead of live chain-walking, fully decoupling discovery from download.)

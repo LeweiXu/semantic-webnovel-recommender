@@ -12,9 +12,9 @@ events remain visible as annotated internal breaks. A machine-readable JSON
 report can also be written with --json.
 
 Usage:
-    python analyze_catalogue_chains.py
-    python analyze_catalogue_chains.py --output gl_catalog_chains.txt
-    python analyze_catalogue_chains.py --json gl_catalog_chains.json
+    python scripts/analyze_catalogue_chains.py
+    python scripts/analyze_catalogue_chains.py --output reports/chains.txt
+    python scripts/analyze_catalogue_chains.py --json data/chains.json
 """
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from repo_paths import DATA_DIR, REPORTS_DIR, resolve_data_input
 
 
 def is_live(record: dict) -> bool:
@@ -364,21 +366,23 @@ def main() -> int:
     parser.add_argument(
         "catalogue",
         nargs="?",
-        default="gl_catalog.json",
-        help="Catalogue JSON to analyse (default: gl_catalog.json)",
+        default=str(DATA_DIR / "gl_catalog.json"),
+        help="Catalogue JSON to analyse (default: data/gl_catalog.json)",
     )
     parser.add_argument(
         "--output",
-        help="Write the visual text report to this file as well as stdout",
+        default=str(REPORTS_DIR / "gl_catalog_chains.txt"),
+        help="Visual report path (default: reports/gl_catalog_chains.txt)",
     )
     parser.add_argument(
         "--json",
-        help="Write structured chain data, including every member URL",
+        default=str(DATA_DIR / "gl_catalog_chains.json"),
+        help="Structured report path (default: data/gl_catalog_chains.json)",
     )
     args = parser.parse_args()
 
     try:
-        by_url, live = load_catalogue(Path(args.catalogue))
+        by_url, live = load_catalogue(resolve_data_input(args.catalogue))
         strict_chains = build_chains(by_url, live)
         chains = merge_display_chains(strict_chains, by_url)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -388,13 +392,15 @@ def main() -> int:
     report = render_report(chains, by_url, live, strict_chain_count=len(strict_chains))
     print(report)
 
-    if args.output:
-        Path(args.output).write_text(report + "\n", encoding="utf-8")
-    if args.json:
-        Path(args.json).write_text(
-            json.dumps(chains, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report + "\n", encoding="utf-8")
+    json_path = Path(args.json)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(
+        json.dumps(chains, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return 0
 
 

@@ -7,13 +7,15 @@ could not be fetched (after retries). This finds every novel that contains one,
 so you can re-download it. Prints the offending page URLs per novel.
 
 Usage:
-    python check_incomplete.py [--output output] [--urls broken_pages.txt]
+    python scripts/check_incomplete.py [--output output] [--urls reports/broken_pages.txt]
 """
 from __future__ import annotations
 
 import argparse
 import re
 from pathlib import Path
+
+from repo_paths import OUTPUT_DIR
 
 MARKER = "页面获取失败"
 _FAIL_RE = re.compile(r"\[页面获取失败:\s*(\S+?)\]")
@@ -22,7 +24,7 @@ _SOURCE_RE = re.compile(r"^来源：(\S+)", re.MULTILINE)
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output", default="output", help="Output directory (default: output)")
+    ap.add_argument("--output", default=str(OUTPUT_DIR), help="Output directory (default: output)")
     ap.add_argument("--urls", help="Optional: write affected novels' 来源 URLs to this file")
     args = ap.parse_args()
 
@@ -53,7 +55,9 @@ def main() -> int:
             print(f"      missing: {u}")
 
     if args.urls and affected:
-        with open(args.urls, "w", encoding="utf-8") as out:
+        urls_path = Path(args.urls)
+        urls_path.parent.mkdir(parents=True, exist_ok=True)
+        with urls_path.open("w", encoding="utf-8") as out:
             for _, _, src in affected:
                 if src:
                     out.write(src + "\n")

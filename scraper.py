@@ -30,12 +30,14 @@ from curl_cffi import requests as cffi_requests
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-OUTPUT_DIR = Path("output")
-STATE_FILE = Path("state.json")
-FAILED_LOG = Path("failed.log")
-BROKEN_CHAIN_LOG = Path("broken_chain.log")
-INCOMPLETE_LOG = Path("incomplete.log")
-LOG_DIR    = Path("logs")
+REPO_ROOT = Path(__file__).resolve().parent
+DATA_DIR = REPO_ROOT / "data"
+OUTPUT_DIR = REPO_ROOT / "output"
+LOG_DIR = REPO_ROOT / "logs"
+STATE_FILE = DATA_DIR / "state.json"
+FAILED_LOG = LOG_DIR / "failed.log"
+BROKEN_CHAIN_LOG = LOG_DIR / "broken_chain.log"
+INCOMPLETE_LOG = LOG_DIR / "incomplete.log"
 IMPERSONATE = "chrome124"
 REQUEST_TIMEOUT = 20
 
@@ -526,6 +528,7 @@ def save_state(state: dict) -> None:
     is rewritten after every novel, so a kill mid-write must not corrupt it:
     write to a temp file, fsync, keep the previous version as .bak, then
     os.replace() (atomic rename on the same filesystem)."""
+    DATA_DIR.mkdir(exist_ok=True)
     data = json.dumps(state, ensure_ascii=False, indent=2)
     tmp = STATE_FILE.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -648,11 +651,13 @@ def write_run_footer(fh, scraped: int, skipped: int, failed: int, elapsed: float
 # ── Novel orchestrator ─────────────────────────────────────────────────────────
 
 def _log_failed(url: str, reason: str) -> None:
+    LOG_DIR.mkdir(exist_ok=True)
     with FAILED_LOG.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now().isoformat()}  {url}  {reason}\n")
 
 
 def _log_incomplete(url: str, out_path: Path, failed_pages: list[str]) -> None:
+    LOG_DIR.mkdir(exist_ok=True)
     with INCOMPLETE_LOG.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now().isoformat()}  {url}  {len(failed_pages)} failed page(s)  {out_path}\n")
         for u in failed_pages:
@@ -803,6 +808,7 @@ def bridge_gap(session: cffi_requests.Session, dead_url: str, is_forward: bool) 
 
 
 def _log_broken_chain(reached_from: str | None, dead_url: str, direction: str) -> None:
+    LOG_DIR.mkdir(exist_ok=True)
     with BROKEN_CHAIN_LOG.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now().isoformat()}  direction={direction}\n")
         f.write(f"  reached_from: {reached_from or '(start)'}\n")
@@ -1007,7 +1013,7 @@ def main() -> int:
 
     # ── Chain-walk ─────────────────────────────────────────────────────────────
     if not state and not args.resume:
-        log.error("No state.json — run with --seed <URL> first.")
+        log.error("No data/state.json — run with --seed <URL> first.")
         return 1
 
     # Set of every source URL we've ever scraped. Used as a loop guard: if the

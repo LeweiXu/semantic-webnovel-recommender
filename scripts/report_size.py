@@ -3,12 +3,14 @@
 report_size.py — summarise the size of the scraped output.
 
 Usage:
-    python report_size.py [--output output]
+    python scripts/report_size.py [--output output]
 """
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
+from repo_paths import OUTPUT_DIR
 
 
 def _fmt(kb: float) -> str:
@@ -21,7 +23,7 @@ def _fmt(kb: float) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output", default="output", help="Output directory (default: output)")
+    ap.add_argument("--output", default=str(OUTPUT_DIR), help="Output directory (default: output)")
     args = ap.parse_args()
 
     base = Path(args.output)

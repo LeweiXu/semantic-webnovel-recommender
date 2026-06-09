@@ -9,7 +9,7 @@ sorted by upload time. Also flags chain inconsistencies (a novel whose 上一篇
 is not the 来源 of any scraped novel — i.e. a potential gap / broken link).
 
 Usage:
-    python inspect_urls.py [--output output] [--json url_map.json]
+    python scripts/inspect_urls.py [--output output] [--json data/url_map.json]
 """
 from __future__ import annotations
 
@@ -18,13 +18,15 @@ import json
 import re
 from pathlib import Path
 
+from repo_paths import DATA_DIR, OUTPUT_DIR
+
 # URL shapes seen on the site:
 #   /gl/07_b/bkecS.html   → category=gl, shard=07_b, id=bkecS   (modern)
 #   /gl/12764.html        → category=gl, shard=None,  id=12764   (old numeric)
 #   /gl/hvsq.html         → category=gl, shard=None,  id=hvsq    (old base62)
 _URL_RE = re.compile(r"/([a-z]+)/(?:([0-9]{2}_[a-z])/)?([0-9A-Za-z]+)\.html")
 
-# base62 alphabet per context.md: 0-9 A-Z a-z
+# base62 alphabet per docs/context.md: 0-9 A-Z a-z
 _B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _B62_IDX = {c: i for i, c in enumerate(_B62)}
 
@@ -96,8 +98,9 @@ def parse_preamble(path: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output", default="output", help="Output directory (default: output)")
-    ap.add_argument("--json", default="url_map.json", help="Structured JSON output path")
+    ap.add_argument("--output", default=str(OUTPUT_DIR), help="Output directory (default: output)")
+    ap.add_argument("--json", default=str(DATA_DIR / "url_map.json"),
+                    help="Structured JSON output path (default: data/url_map.json)")
     args = ap.parse_args()
 
     base = Path(args.output)
@@ -119,7 +122,9 @@ def main() -> int:
         if r["prev_url"] and r["prev_url"] not in have_urls:
             gaps.append(r)
 
-    with open(args.json, "w", encoding="utf-8") as f:
+    json_path = Path(args.json)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    with json_path.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
     # ── Human-readable table ──────────────────────────────────────────────────

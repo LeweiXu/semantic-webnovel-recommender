@@ -12,7 +12,7 @@ request.
 Usage:
     python scrape_from_catalogue.py
     python scrape_from_catalogue.py --forward
-    python scrape_from_catalogue.py --catalogue gl_catalog.json --limit 20
+    python scrape_from_catalogue.py --catalogue data/gl_catalog.json --limit 20
     python scrape_from_catalogue.py --workers 3 --verbose
 """
 from __future__ import annotations
@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from curl_cffi import requests as cffi_requests
 
 from scraper import (
+    DATA_DIR,
     DELAY_NOVEL,
     DELAY_NOVEL_JITTER,
     INCOMPLETE_LOG,
@@ -108,8 +109,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--catalogue",
-        default="gl_catalog.json",
-        help="Catalogue JSON from estimate_history.py (default: gl_catalog.json)",
+        default=str(DATA_DIR / "gl_catalog.json"),
+        help="Catalogue JSON from estimate_history.py (default: data/gl_catalog.json)",
     )
     parser.add_argument(
         "--limit",
@@ -146,6 +147,10 @@ def main() -> int:
         parser.error("--workers must be at least 1")
 
     catalogue_path = Path(args.catalogue)
+    if not catalogue_path.exists() and catalogue_path.parent == Path("."):
+        legacy_candidate = DATA_DIR / catalogue_path.name
+        if legacy_candidate.exists():
+            catalogue_path = legacy_candidate
     try:
         urls, invalid, duplicates = load_catalogue_urls(catalogue_path)
     except (OSError, json.JSONDecodeError, ValueError) as exc:

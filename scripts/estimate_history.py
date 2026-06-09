@@ -23,9 +23,9 @@ prev/next/recommendation frontiers are enqueued. Confirmed 404 URLs are stored
 in the catalogue and are never requested again.
 
 Usage:
-    python estimate_history.py <start_url> [--budget N] [--delay 0.15] ...
-    python estimate_history.py --seed-map url_map.json
-    python estimate_history.py --seed-map gl_catalog.json   # resume a prior crawl
+    python scripts/estimate_history.py <start_url> [--budget N] [--delay 0.15] ...
+    python scripts/estimate_history.py --seed-map data/url_map.json
+    python scripts/estimate_history.py --seed-map data/gl_catalog.json
 """
 from __future__ import annotations
 
@@ -37,7 +37,13 @@ import sys
 import time
 from collections import deque
 from datetime import date
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +56,7 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
 
 from analyze_catalogue_chains import build_chains
+from repo_paths import DATA_DIR, REPORTS_DIR, resolve_data_input
 from scraper import fetch, parse_landing, step_url_id, _b62_to_int
 
 _DATE_RE = re.compile(r"(\d{4})年(\d{2})月(\d{2})日")
@@ -235,7 +242,9 @@ def write_catalog(path: str, records: list[dict]) -> int:
             r["url"],
         ),
     )
-    with open(path, "w", encoding="utf-8") as f:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
     return len(catalog)
 
@@ -444,11 +453,11 @@ def build_report(records: list[dict], stop_reason: str, gaps: list[dict],
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("start_url", nargs="?", help="Seed URL for the crawl (optional if --seed-map given)")
-    ap.add_argument("--seed-map", help="url_map.json or gl_catalog.json of already-known novels")
+    ap.add_argument("--seed-map", help="data/url_map.json or data/gl_catalog.json of already-known novels")
     ap.add_argument("--budget", type=int, default=20000, help="Max NEW novels to fetch this run")
     ap.add_argument("--delay", type=float, default=0.15)
-    ap.add_argument("--json", default="gl_catalog.json")
-    ap.add_argument("--report", default="gl_catalog_report.txt")
+    ap.add_argument("--json", default=str(DATA_DIR / "gl_catalog.json"))
+    ap.add_argument("--report", default=str(REPORTS_DIR / "gl_catalog_report.txt"))
     ap.add_argument("--avg-mb", type=float, default=1.2)
     ap.add_argument(
         "--bridge-steps",
@@ -546,7 +555,8 @@ def main() -> int:
     try:
         # ── Seed ────────────────────────────────────────────────────────────
         if args.seed_map:
-            with open(args.seed_map, encoding="utf-8") as f:
+            seed_map = resolve_data_input(args.seed_map)
+            with seed_map.open(encoding="utf-8") as f:
                 raw = json.load(f)
             seeded = 0
             for rec in raw:
@@ -554,7 +564,7 @@ def main() -> int:
                 if a:
                     records_by_url[a["url"]] = a
                     seeded += 1
-            log.info("Seeded %d known novels from %s", seeded, args.seed_map)
+            log.info("Seeded %d known novels from %s", seeded, seed_map)
 
             live_records = {
                 url: record
@@ -772,7 +782,9 @@ def main() -> int:
     records = list(records_by_url.values())
     n_catalog = write_catalog(args.json, records)
     report = build_report(records, stop_reason, gaps, elapsed, args.avg_mb)
-    with open(args.report, "w", encoding="utf-8") as f:
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", encoding="utf-8") as f:
         f.write(report + "\n")
 
     log.info(

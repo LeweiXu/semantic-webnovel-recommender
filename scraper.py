@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""
-scraper.py — 52shuku.net GL novel chain-walk scraper
-
-Usage:
-    python scraper.py --seed URL          # first run: scrape URL, init state
-    python scraper.py --forward           # scrape newer novels (下一篇 from newest)
-    python scraper.py --backward          # scrape older novels (上一篇 from oldest)
-    python scraper.py --backward --limit 5
-"""
+"""Shared parsing, fetching, output, state, and logging for 52shuku scrapers."""
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
@@ -36,18 +27,9 @@ OUTPUT_DIR = REPO_ROOT / "output"
 LOG_DIR = REPO_ROOT / "logs"
 STATE_FILE = REPO_ROOT / "state.json"
 FAILED_LOG = LOG_DIR / "failed.log"
-BROKEN_CHAIN_LOG = LOG_DIR / "broken_chain.log"
 INCOMPLETE_LOG = LOG_DIR / "incomplete.log"
 IMPERSONATE = "chrome124"
 REQUEST_TIMEOUT = 20
-
-# When a 上一篇/下一篇 link 404s (novel deleted but neighbours not relinked),
-# probe up to this many id steps within the SAME shard to bridge the gap. IDs
-# are a GLOBAL base62 counter shared across all categories, so a gap of one
-# deleted GL novel can span many id slots taken by other-category novels (we
-# measured an 85-slot gap in the old /gl/b/ era). 150 covers those; the reverse-
-# link verification in bridge_gap() keeps a wide window from false-bridging.
-PROBE_BUDGET = 150
 
 DELAY_CHAPTER = 0.1        # seconds between chapter page fetches (within a novel)
 DELAY_CHAPTER_JITTER = 0.05
@@ -528,7 +510,7 @@ def save_state(state: dict) -> None:
     is rewritten after every novel, so a kill mid-write must not corrupt it:
     write to a temp file, fsync, keep the previous version as .bak, then
     os.replace() (atomic rename on the same filesystem)."""
-    DATA_DIR.mkdir(exist_ok=True)
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(state, ensure_ascii=False, indent=2)
     tmp = STATE_FILE.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -540,7 +522,7 @@ def save_state(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def _source_url_from_file(path: Path) -> str | None:
+def source_url_from_file(path: Path) -> str | None:
     """Read the 来源 (source URL) line from a scraped .txt preamble."""
     try:
         with path.open(encoding="utf-8") as f:
@@ -562,7 +544,7 @@ def backfill_scraped(state: dict, output_dir: Path) -> None:
         return
     urls = set()
     for p in output_dir.rglob("*.txt"):
-        u = _source_url_from_file(p)
+        u = source_url_from_file(p)
         if u:
             urls.add(u)
     state["scraped"] = sorted(urls)
@@ -664,7 +646,7 @@ def _log_incomplete(url: str, out_path: Path, failed_pages: list[str]) -> None:
             f.write(f"    {u}\n")
 
 
-def _is_complete_file(path: Path) -> bool:
+def is_complete_file(path: Path) -> bool:
     """Cheap completeness check from the preamble's 完整性 line. Files written
     before this field existed (no line) are treated as complete."""
     try:
@@ -690,7 +672,7 @@ def find_incomplete(output_dir: Path) -> list[tuple[Path, str | None]]:
         except OSError:
             continue
         if "页面获取失败" in text:
-            out.append((p, _source_url_from_file(p)))
+            out.append((p, source_url_from_file(p)))
     return out
 
 
@@ -764,57 +746,6 @@ def _fetch_pages(
     return results, failed
 
 
-def bridge_gap(session: cffi_requests.Session, dead_url: str, is_forward: bool) -> str | None:
-    """A 上一篇/下一篇 link 404'd. Probe nearby ids in the SAME shard to find the
-    next live GL novel. Backward → decrement ids; forward → increment.
-
-    The first live candidate is then VERIFIED: its reverse-direction link (下一篇
-    when walking backward, 上一篇 when walking forward) must point back to one of
-    the dead pages we just probed. Because the site doesn't relink around deleted
-    novels, a genuine bridge target still points into the gap — so a match proves
-    we landed adjacent to the gap and can auto-continue. No match → return None so
-    the caller falls back to manual --resume.
-    """
-    step = 1 if is_forward else -1
-    dead_seen = {dead_url}
-    rev_label = "上一篇" if is_forward else "下一篇"
-
-    for k in range(1, PROBE_BUDGET + 1):
-        cand = step_url_id(dead_url, step * k)
-        if cand is None:
-            break
-        time.sleep(DELAY_CHAPTER)
-        try:
-            resp = fetch(session, cand)   # OK = live GL page; 404 → FileNotFoundError
-        except FileNotFoundError:
-            dead_seen.add(cand)
-            continue
-        except Exception:
-            continue
-
-        # Live candidate — verify its reverse link points back into the gap.
-        meta = parse_landing(resp.text, cand)
-        reverse_url = meta.prev_url if is_forward else meta.next_url
-        if reverse_url in dead_seen:
-            log.info("Bridge verified: %s %s → %s (a probed dead link)", cand, rev_label, reverse_url)
-            return cand
-        log.warning(
-            "Bridge candidate %s found, but its %s (%s) is not one of the probed "
-            "dead pages — not auto-continuing.", cand, rev_label, reverse_url or "—",
-        )
-        return None
-
-    return None
-
-
-def _log_broken_chain(reached_from: str | None, dead_url: str, direction: str) -> None:
-    LOG_DIR.mkdir(exist_ok=True)
-    with BROKEN_CHAIN_LOG.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().isoformat()}  direction={direction}\n")
-        f.write(f"  reached_from: {reached_from or '(start)'}\n")
-        f.write(f"  dead_link:    {dead_url}\n\n")
-
-
 def scrape_novel(
     session: cffi_requests.Session,
     url: str,
@@ -856,7 +787,7 @@ def scrape_novel(
     # Skip only if a COMPLETE file already exists. An incomplete file (a previous
     # run left failed-page placeholders) is re-fetched so it can be repaired.
     if out_path.exists() and not force:
-        if _is_complete_file(out_path):
+        if is_complete_file(out_path):
             log.info("Skip (exists): %s/%s", novel_dir.name, out_path.name)
             chapters = split_into_chapters([])
             return ScrapedNovel(meta=meta, chapters=chapters, page_count=0,
@@ -898,254 +829,7 @@ def scrape_novel(
     )
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--seed", metavar="URL", help="Scrape URL and initialise state")
-    mode.add_argument("--forward",  action="store_true", help="Scrape newer novels (下一篇 from newest)")
-    mode.add_argument("--backward", action="store_true", help="Scrape older novels (上一篇 from oldest)")
-    mode.add_argument("--get", metavar="URL", help="Download a single novel from URL (no state change; "
-                                                   "writes directly into --output, overwrites if present)")
-    mode.add_argument("--repair", action="store_true", help="Re-download every novel under --output that has "
-                                                            "failed-page placeholders (incomplete files)")
-    parser.add_argument("--limit",   type=int, default=0,             help="Stop after N novels (0 = unlimited)")
-    parser.add_argument("--output",  default=str(OUTPUT_DIR),         help="Output directory (default: output/)")
-    parser.add_argument("--workers", type=int, default=1,             help="Parallel page fetches per novel (default 1; try 3–5)")
-    parser.add_argument("--verbose", action="store_true",             help="Print each page on its own line instead of in-place")
-    parser.add_argument("--resume",  metavar="URL",                   help="With --forward/--backward: start the walk AT this URL (inclusive). "
-                                                                          "Use to bridge a broken chain manually after a deleted novel.")
-    args = parser.parse_args()
-
-    if args.resume and not (args.forward or args.backward):
-        parser.error("--resume requires --forward or --backward")
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    session = cffi_requests.Session()
-    state = load_state()
-
-    # ── Seed ───────────────────────────────────────────────────────────────────
-    if args.seed:
-        mode_label = "seed"
-        log_path, log_fh = open_run_log(mode_label, args.limit, output_dir)
-        t0 = time.monotonic()
-
-        url = args.seed.strip()
-        try:
-            novel = scrape_novel(session, url, output_dir, workers=args.workers, verbose=args.verbose)
-        except FileNotFoundError:
-            log.error("Seed URL 404 (no such novel): %s", url)
-            write_run_footer(log_fh, 0, 0, 1, time.monotonic() - t0)
-            return 1
-        if novel:
-            state["oldest_url"] = url
-            state["newest_url"] = url
-            state["scraped"] = sorted(set(state.get("scraped", [])) | {url})
-            save_state(state)
-            log.info("State initialised: oldest=newest=%s", url)
-            write_novel_log(log_fh, novel, "OK" if not novel.skipped else "SKIP")
-            write_run_footer(log_fh, 1, 0, 0, time.monotonic() - t0)
-            log.info("Run log: %s", log_path)
-            return 0
-        write_run_footer(log_fh, 0, 0, 1, time.monotonic() - t0)
-        return 1
-
-    # ── Single download ──────────────────────────────────────────────────────────
-    if args.get:
-        log_path, log_fh = open_run_log("get", args.limit, output_dir)
-        t0 = time.monotonic()
-
-        url = args.get.strip()
-        try:
-            novel = scrape_novel(session, url, output_dir, workers=args.workers,
-                                 verbose=args.verbose, month_subdir=False, force=True)
-        except FileNotFoundError:
-            log.error("URL 404 (no such novel): %s", url)
-            write_run_footer(log_fh, 0, 0, 1, time.monotonic() - t0)
-            return 1
-        if novel:
-            write_novel_log(log_fh, novel, "OK")
-            write_run_footer(log_fh, 1, 0, 0, time.monotonic() - t0)
-            log.info("Run log: %s", log_path)
-            return 0
-        write_run_footer(log_fh, 0, 0, 1, time.monotonic() - t0)
-        return 1
-
-    # ── Repair incomplete novels ─────────────────────────────────────────────────
-    if args.repair:
-        log_path, log_fh = open_run_log("repair", args.limit, output_dir)
-        t0 = time.monotonic()
-
-        targets = find_incomplete(output_dir)
-        log.info("Found %d incomplete novel(s) to repair.", len(targets))
-        scraped = set(state.get("scraped", []))
-        n_ok = n_fail = 0
-        for path, src in targets:
-            if not src:
-                log.warning("Cannot repair %s — no 来源 URL in preamble", path)
-                n_fail += 1
-                continue
-            try:
-                novel = scrape_novel(session, src, output_dir, workers=args.workers,
-                                     verbose=args.verbose, force=True)
-            except FileNotFoundError:
-                log.error("Repair: source 404 (deleted) %s", src)
-                n_fail += 1
-                continue
-            if novel and not novel.failed_pages:
-                n_ok += 1
-                write_novel_log(log_fh, novel, "REPAIRED")
-                scraped.add(src)
-            else:
-                n_fail += 1
-                write_novel_log(log_fh, novel or _stub_novel(src), "STILL-PARTIAL")
-            time.sleep(DELAY_NOVEL + random.uniform(0, DELAY_NOVEL_JITTER))
-
-        if state:
-            state["scraped"] = sorted(scraped)
-            save_state(state)
-        write_run_footer(log_fh, n_ok, 0, n_fail, time.monotonic() - t0)
-        log.info("Repair done: %d fixed, %d still failing — log: %s", n_ok, n_fail, log_path)
-        return 0
-
-    # ── Chain-walk ─────────────────────────────────────────────────────────────
-    if not state and not args.resume:
-        log.error("No data/state.json — run with --seed <URL> first.")
-        return 1
-
-    # Set of every source URL we've ever scraped. Used as a loop guard: if the
-    # walk revisits one (e.g. the old 2020 cluster, whose 上一篇 links cycle, or
-    # simply rejoining already-scraped territory), we terminate cleanly.
-    backfill_scraped(state, output_dir)
-    scraped: set[str] = set(state.get("scraped", []))
-
-    is_forward = args.forward
-    mode_label = "forward" if is_forward else "backward"
-    log_path, log_fh = open_run_log(mode_label, args.limit, output_dir)
-    t0 = time.monotonic()
-    dir_label = "下一篇" if is_forward else "上一篇"
-
-    if args.resume:
-        # Start AT the given URL (inclusive). Used to bridge a broken chain after
-        # a deleted novel. We do NOT touch the old boundary's preamble.
-        current_url = args.resume.strip()
-        log.info("Resume %s walk at %s (inclusive)", dir_label, current_url)
-    else:
-        boundary_url = state["newest_url"] if is_forward else state["oldest_url"]
-        log.info("Chain walk %s from boundary: %s", dir_label, boundary_url)
-
-        try:
-            resp = fetch(session, boundary_url)
-        except Exception as e:
-            log.error("Cannot fetch boundary %s: %s", boundary_url, e)
-            write_run_footer(log_fh, 0, 0, 1, time.monotonic() - t0)
-            return 1
-
-        boundary_meta = parse_landing(resp.text, boundary_url)
-        current_url = boundary_meta.next_url if is_forward else boundary_meta.prev_url
-
-        if not current_url:
-            log.info("No %s from boundary — already at chain end.", dir_label)
-            write_run_footer(log_fh, 0, 0, 0, time.monotonic() - t0)
-            return 0
-
-        # The boundary novel was scraped in a previous run and may have "—" for the
-        # direction we're now walking. Patch it with the live nav data we just fetched.
-        direction = "next" if is_forward else "prev"
-        nav_title = boundary_meta.next_title if is_forward else boundary_meta.prev_title
-        nav_url   = boundary_meta.next_url   if is_forward else boundary_meta.prev_url
-        boundary_file = upload_month_dir(boundary_meta.upload_date, output_dir) / title_to_filename(
-            boundary_meta.title, boundary_meta.author, boundary_meta.status
-        )
-        if update_nav_in_file(boundary_file, direction, nav_title, nav_url):
-            log.info("Updated %s preamble of %s → %s", dir_label, boundary_file.name, nav_url)
-
-    n_scraped = n_skipped = n_failed = 0
-    last_good_url: str | None = None
-
-    while current_url:
-        if args.limit and (n_scraped + n_skipped) >= args.limit:
-            log.info("Reached --limit %d.", args.limit)
-            break
-
-        if current_url in scraped:
-            log.info("Already scraped %s — chain rejoined known territory / loop. Stopping.", current_url)
-            break
-
-        try:
-            novel = scrape_novel(session, current_url, output_dir, workers=args.workers, verbose=args.verbose)
-        except FileNotFoundError:
-            # The link we followed points to a deleted novel — a chain gap.
-            log.warning("404 (deleted novel): %s — probing ±%d in-shard…", current_url, PROBE_BUDGET)
-            bridged = bridge_gap(session, current_url, is_forward)
-            if bridged:
-                log.warning("Bridged gap → resuming at %s", bridged)
-                current_url = bridged
-                continue
-            n_failed += 1
-            _log_broken_chain(last_good_url, current_url, dir_label)
-            log.error("Broken chain at %s; in-shard bridge failed. Logged to %s.",
-                      current_url, BROKEN_CHAIN_LOG)
-            log.error("Find the next live novel on the site, then resume with:")
-            log.error("    python scraper.py --%s --resume <URL>", mode_label)
-            break
-
-        if novel is None:
-            n_failed += 1
-            write_novel_log(log_fh, _stub_novel(current_url), "FAIL")
-            log.error("Unrecoverable failure at %s — stopping.", current_url)
-            break
-
-        if novel.skipped:
-            n_skipped += 1
-            write_novel_log(log_fh, novel, "SKIP")
-        elif novel.failed_pages:
-            n_failed += 1
-            write_novel_log(log_fh, novel, "PARTIAL")
-            log.warning("Incomplete (%d failed pages): %s — logged to %s, will retry on --repair",
-                        len(novel.failed_pages), current_url, INCOMPLETE_LOG)
-        else:
-            n_scraped += 1
-            write_novel_log(log_fh, novel, "OK")
-
-        if is_forward:
-            state["newest_url"] = current_url
-        else:
-            state["oldest_url"] = current_url
-        # Only mark COMPLETE novels as scraped. Incomplete ones stay out of the
-        # set so a future pass / --repair will re-fetch them.
-        if not novel.failed_pages:
-            scraped.add(current_url)
-            state["scraped"] = sorted(scraped)
-        save_state(state)
-        last_good_url = current_url
-
-        next_hop = novel.meta.next_url if is_forward else novel.meta.prev_url
-        if not next_hop:
-            log.info("No %s from %s — reached chain end.", dir_label, current_url)
-            break
-        current_url = next_hop
-
-        delay = DELAY_NOVEL + random.uniform(0, DELAY_NOVEL_JITTER)
-        log.info("Sleeping %.1fs before next novel…", delay)
-        time.sleep(delay)
-
-    write_run_footer(log_fh, n_scraped, n_skipped, n_failed, time.monotonic() - t0)
-    log.info(
-        "Done: %d scraped  %d skipped  %d failed  — log: %s",
-        n_scraped, n_skipped, n_failed, log_path,
-    )
-    return 0
-
-
-def _stub_novel(url: str) -> ScrapedNovel:
+def stub_novel(url: str) -> ScrapedNovel:
     """Minimal ScrapedNovel for logging a failure where we have no parsed data."""
     meta = NovelMeta(url=url, title="", author="", status="", upload_date="")
     return ScrapedNovel(meta=meta, chapters=[], page_count=0, file_path=Path(url))
-
-
-if __name__ == "__main__":
-    sys.exit(main())

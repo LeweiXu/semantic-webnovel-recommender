@@ -47,11 +47,11 @@ challenge for hours.
 
 USAGE
 -----
-    python probe_rate_limit.py
-    python probe_rate_limit.py --max-aggressive   # also runs the no-delay burst
+    python scripts/probe_rate_limit.py
+    python scripts/probe_rate_limit.py --max-aggressive
 
 Be a good citizen: run this ONCE to characterise the site, write the number
-into context.md, and don't re-run it repeatedly.
+into docs/context.md, and don't re-run it repeatedly.
 """
 
 from __future__ import annotations
@@ -302,7 +302,7 @@ def main() -> int:
         f"\nRECOMMENDED SCRAPER THROTTLE: ~{safe_delay:.1f}s between requests "
         f"(~{rpm:.0f} req/min),\nplus randomized jitter and exponential backoff on any "
         "CHALLENGED/429 response.\n"
-        "Record this number in context.md so the scraper phase uses it."
+        "Record this number in docs/context.md so the scraper phase uses it."
     )
     print("-" * 78)
     return 0

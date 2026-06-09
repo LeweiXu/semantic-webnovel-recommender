@@ -3,7 +3,7 @@
 Download novels listed in a catalogue JSON file without walking site links.
 
 The catalogue must be a JSON array whose entries contain a "url" field, as
-produced by estimate_history.py. By default, live entries are processed in
+produced by scripts/create_catalogue.py. By default, live entries are processed in
 reverse catalogue order (newest to oldest). Use --forward for catalogue order
 (oldest to newest). Entries marked fetch_status="not_found" and complete novels
 already present under the output directory are skipped without a network
@@ -35,13 +35,13 @@ from scraper import (
     DELAY_NOVEL_JITTER,
     INCOMPLETE_LOG,
     OUTPUT_DIR,
-    _is_complete_file,
-    _source_url_from_file,
-    _stub_novel,
+    is_complete_file,
     load_state,
     open_run_log,
     save_state,
     scrape_novel,
+    source_url_from_file,
+    stub_novel,
     write_novel_log,
     write_run_footer,
 )
@@ -97,9 +97,9 @@ def find_complete_urls(output_dir: Path) -> set[str]:
     """Read source URLs from complete output files for zero-request resume."""
     complete: set[str] = set()
     for path in output_dir.rglob("*.txt"):
-        if not _is_complete_file(path):
+        if not is_complete_file(path):
             continue
-        url = _source_url_from_file(path)
+        url = source_url_from_file(path)
         if url:
             complete.add(url)
     return complete
@@ -110,7 +110,7 @@ def main() -> int:
     parser.add_argument(
         "--catalogue",
         default=str(DATA_DIR / "gl_catalog.json"),
-        help="Catalogue JSON from estimate_history.py (default: data/gl_catalog.json)",
+        help="Catalogue JSON from scripts/create_catalogue.py (default: data/gl_catalog.json)",
     )
     parser.add_argument(
         "--limit",
@@ -217,11 +217,11 @@ def main() -> int:
             except FileNotFoundError:
                 n_failed += 1
                 log.error("Catalogue URL 404 (deleted novel): %s", url)
-                write_novel_log(log_fh, _stub_novel(url), "FAIL")
+                write_novel_log(log_fh, stub_novel(url), "FAIL")
             else:
                 if novel is None:
                     n_failed += 1
-                    write_novel_log(log_fh, _stub_novel(url), "FAIL")
+                    write_novel_log(log_fh, stub_novel(url), "FAIL")
                     log.error("Unrecoverable failure at %s; continuing.", url)
                 elif novel.skipped:
                     n_skipped += 1

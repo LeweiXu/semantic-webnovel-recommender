@@ -25,20 +25,22 @@ Stack: **Python**, `curl_cffi` (browser-impersonating HTTP, NOT `requests`),
 
 | File | Purpose |
 |------|---------|
-| `scraper.py` | The scraper. Chain-walk + per-novel parse + `.txt` serialise + resumable state. Modes below. |
-| `scrape_from_catalogue.py` | Downloads only live URLs listed in `gl_catalog.json`; default newest→oldest, with `--forward` for oldest→newest. Does not follow prev/next links. Reuses `scraper.py` parsing, output, throttling, and run logs. |
-| `estimate_history.py` | **Catalogue builder / discovery.** Graph-crawls the whole GL catalogue (prev/next + recommendations) into `gl_catalog.json` + a report. Landing-pages only, no chapter download. |
-| `add_catalogue_fetch_status.py` | One-time/idempotent migration: adds `fetch_status: "ok"` to legacy catalogue entries that do not have a status. |
-| `analyze_catalogue_chains.py` | Partitions `gl_catalog.json` into strict reciprocal chains, then merges display segments across one shared 404 or trivial non-reciprocal intermediary while retaining inline break annotations. |
-| `inspect_urls.py` | Scans `output/**/*.txt` preambles → `url_map.json` (structured per-novel URL/date/prev/next data). Flags chain gaps. |
-| `report_size.py` | Disk-usage summary of `output/` (total, avg, per-month). |
-| `check_incomplete.py` | Scans output for `[页面获取失败]` placeholders → lists novels needing repair. |
-| `probe_rate_limit.py` | One-shot rate-limit characterisation. Already run. |
+| `scraper.py` | Shared scraper library: HTTP fetching, page parsing, text extraction, output formatting, state handling, and run logging. It has no CLI. |
+| `scrape_from_walk.py` | Previous/next chain-walk CLI. Provides seed, forward, backward, resume, one-off download, and repair modes. |
+| `scrape_from_catalogue.py` | Downloads only live URLs listed in `data/gl_catalog.json`; default newest→oldest, with `--forward` for oldest→newest. Does not follow prev/next links. |
+| `scripts/create_catalogue.py` | **Catalogue builder / discovery.** Graph-crawls the whole GL catalogue into `data/gl_catalog.json` and writes its report under `reports/`. |
+| `scripts/analyze_catalogue_chains.py` | Analyses `data/gl_catalog.json`, writing its visual report under `reports/` and structured JSON under `data/`. |
+| `scripts/inspect_urls.py` | Scans `output/**/*.txt` preambles and writes `data/url_map.json`. |
+| `scripts/report_size.py` | Disk-usage summary of `output/` (total, avg, per-month). |
+| `scripts/check_incomplete.py` | Scans output for `[页面获取失败]` placeholders and lists novels needing repair. |
+| `scripts/probe_rate_limit.py` | One-shot rate-limit characterisation. Already run. |
 | `state.json` | Resumable state (atomic-written + `.bak`): `oldest_url`, `newest_url`, `scraped[]`. |
-| `gl_catalog.json` | Canonical novel list from `estimate_history.py` (oldest-first). |
-| `url_map.json` | Per-downloaded-novel URL data from `inspect_urls.py`. |
+| `data/gl_catalog.json` | Canonical novel list from `scripts/create_catalogue.py` (oldest-first). |
+| `data/url_map.json` | Per-downloaded-novel URL data from `scripts/inspect_urls.py`. |
+| `docs/robots.txt`, `docs/sitemap.xml` | Captured site metadata. |
+| `reports/` | Generated human-readable reports. |
 
-### `scraper.py` modes
+### `scrape_from_walk.py` modes
 - `--seed URL` — scrape one novel, initialise `state.json`.
 - `--backward` — walk `上一篇` from `oldest_url` (the main bulk direction: newest→oldest).
 - `--forward` — walk `下一篇` from `newest_url` (catch novels newer than the seed).
@@ -72,7 +74,7 @@ ID to an int is only useful for local stepping, not for counting GL novels.
 
 ### Landing page selectors (`parse_landing`)
 - Title+author+status: `h1.article-title` → text like `冷淡学霸与可爱小猫_宋叙彦【完结】`.
-  Parse: strip `【…】` (status), then split on last `_` → (title, author).
+  Parse: strip `【…】` (status), then split on the first `_` → (title, author).
 - Upload date: `time.muted` (e.g. `2026年06月06日 16:26:16`).
 - Chapter/reading pages: `ul.list li.mulu a` → `{id}_2.html`, `_3.html`, …
   (the "开始阅读" link duplicates `_2`; de-dup by href). **Do not assume pages
@@ -100,7 +102,7 @@ ID to an int is only useful for local stepping, not for counting GL novels.
 
 ## Discovery strategy — what works
 
-### 1. Chain walk (`scraper.py --backward/--forward`)
+### 1. Chain walk (`scrape_from_walk.py --backward/--forward`)
 Follow `上一篇`/`下一篇` links, scraping each novel as reached. Reliable **within
 a contiguous segment**. `state.json["scraped"]` is a set used as a **loop guard**
 (the ~Nov-2020 origin cluster's prev-links form a cycle; revisiting a scraped URL
@@ -112,7 +114,7 @@ When a `上一篇/下一篇` 404s (novel deleted, neighbours not relinked), prob
 live novel, then **verify** its reverse link points back into the probed gap
 before auto-continuing. Works in the **mid `/gl/b/` era** (one shared shard).
 
-### 3. Graph crawl (`estimate_history.py`) — the robust full-catalogue method
+### 3. Graph crawl (`scripts/create_catalogue.py`) — the robust full-catalogue method
 The chain alone **cannot cross a deletion gap in the modern `/gl/DD_b/` scheme**:
 the shard is the upload *day*, so the chronological predecessor lives in a
 *different* shard and an in-shard probe can never reach it. Solution: BFS the
@@ -121,7 +123,7 @@ catalogue graph using **prev + next + recommendation links** as edges.
 - recommendations (`div.relates`, which point to other shards/days) **hop across
   gaps** to disconnected segments. The rec pool snowballs (~+7/page).
 - A small same-shard bridge still crosses tiny same-day gaps.
-- Seedable/resumable via `--seed-map url_map.json | gl_catalog.json`; a catalogue
+- Seedable/resumable via `--seed-map data/url_map.json | data/gl_catalog.json`; a catalogue
   seed has no stored recs, so it **primes** the pool by harvesting recs from the
   N oldest known novels (`--prime`).
 - Reports **missing segments**: chain breaks (a novel whose `上一篇` isn't in the
@@ -130,10 +132,10 @@ catalogue graph using **prev + next + recommendation links** as edges.
 The crawl exhausts all known `上一篇`/`下一篇` chain frontiers before using
 recommendations. Recommendations are explored breadth-first from a root, with
 the default maximum depth set by `RECOMMENDATION_BFS_DEPTH` near the top of
-`estimate_history.py` (overridable with `--recommendation-depth`).
+`scripts/create_catalogue.py` (overridable with `--recommendation-depth`).
 
-On resume from `gl_catalog.json`, startup uses the same reciprocal-chain
-partition as `analyze_catalogue_chains.py`. It requests only URLs marked
+On resume from `data/gl_catalog.json`, startup uses the same reciprocal-chain
+partition as `scripts/analyze_catalogue_chains.py`. It requests only URLs marked
 `missing_from_catalogue`, then refreshes the newest live chain end once to
 discover uploads added since the previous run. Existing confirmed-404 entries
 are never requested. If a newly confirmed 404 is referenced by an existing
@@ -141,10 +143,10 @@ older and/or newer live record, that boundary is considered represented and no
 ID probing is attempted. Same-shard ID probing is disabled by default
 (`--bridge-steps 0`) and must be explicitly enabled.
 
-`gl_catalog.json` persists request outcomes:
+`data/gl_catalog.json` persists request outcomes:
 - `fetch_status: "ok"` — live landing page.
 - `fetch_status: "not_found"` — confirmed 404; title/author/date/navigation are
-  `null`. Both `estimate_history.py` and `scrape_from_catalogue.py` skip these
+  `null`. Both `scripts/create_catalogue.py` and `scrape_from_catalogue.py` skip these
   URLs on later runs, preventing repeated 404 probes.
 - Live records harvested by the updated crawler also store
   `recommendation_urls`, `recommendation_depth`, and
@@ -161,9 +163,9 @@ upload dates inconsistent with their prev/next position.
 
 1. **Paginated index `/gl/index_N.html`.** Curated recent list only; bottoms out
    ~2025. ❌ Incomplete.
-2. **`sitemap.xml`.** Rolling "recently updated" feed (~491 URLs site-wide, ~50
+2. **`docs/sitemap.xml`.** Rolling "recently updated" feed (~491 URLs site-wide, ~50
    GL, all recent). `sitemap_index.xml` 404s. ❌ Incomplete.
-3. **`/so/` search.** Disallowed by robots.txt; query strings (`/*?*`) blocked too. ❌ Off-limits.
+3. **`/so/` search.** Disallowed by `docs/robots.txt`; query strings (`/*?*`) blocked too. ❌ Off-limits.
 4. **Exhaustive base62 sweep.** Global IDs → mostly other-category 404s (looks
    like abuse) and misses old schemes. ❌ Impolite + incomplete.
 5. **In-shard id-bridge across a MODERN-scheme gap.** Because the shard is the
@@ -205,7 +207,7 @@ both jittered.
 - Be a good citizen: single-threaded by default, jittered delays, checkpoint
   after every novel.
 
-### robots.txt
+### `docs/robots.txt`
 - `/gl/` is **allowed**. Honor disallows: `/e/*`, `/*?*`, `/d/*`, `/so/*`,
   `/templets`, `/404.html`, `/bookcase.html`, `/skin/52shuku/js/*`.
 - Named AI/SEO bots (ClaudeBot, GPTBot, …) are `Disallow: /`. Use an honest
@@ -251,8 +253,8 @@ both jittered.
   `oldest_url`, `newest_url`, and `scraped[]` (all complete novels — the loop guard).
 - **Partial novels:** a chapter page that fails after retries leaves a
   `[页面获取失败: url]` placeholder; the preamble `完整性` line records it; the
-  novel is logged to `incomplete.log` and **kept out of `scraped[]`** so it's
-  re-fetched. `scraper.py --repair` re-downloads all such files.
+  novel is logged to `logs/incomplete.log` and **kept out of `scraped[]`** so it's
+  re-fetched. `scrape_from_walk.py --repair` re-downloads all such files.
 - Idempotent: a COMPLETE existing file is skipped; an incomplete one is re-fetched.
 
 ---
@@ -272,12 +274,14 @@ both jittered.
 ## Suggested workflow for a full build
 
 ```bash
-python3 inspect_urls.py                                   # refresh url_map.json from output/
-python3 estimate_history.py --seed-map url_map.json       # build gl_catalog.json (discovery)
+python3 scripts/inspect_urls.py                           # refresh data/url_map.json from output/
+python3 scripts/create_catalogue.py --seed-map data/url_map.json
 # then download exactly the live catalogue URLs, newest→oldest by default:
-python3 scrape_from_catalogue.py --catalogue gl_catalog.json --workers 3
+python3 scrape_from_catalogue.py --catalogue data/gl_catalog.json --workers 3
 # use --forward for oldest→newest
-python3 check_incomplete.py        # verify; then `scraper.py --repair` if needed
+python3 scripts/check_incomplete.py
+# repair incomplete downloads if needed:
+python3 scrape_from_walk.py --repair
 ```
-The original `scraper.py --backward/--forward` chain-walk modes remain available
-and unchanged.
+The catalogue-free chain walk remains available through
+`scrape_from_walk.py --backward` and `scrape_from_walk.py --forward`.

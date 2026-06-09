@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-estimate_history.py — build a canonical list of every GL novel by crawling the
+create_catalogue.py — build a canonical list of every GL novel by crawling the
 catalogue graph, then emit a comprehensive report (date span, per-year counts,
 URL schemes, deletion gaps, and MISSING segments / broken chains).
 
@@ -23,9 +23,9 @@ prev/next/recommendation frontiers are enqueued. Confirmed 404 URLs are stored
 in the catalogue and are never requested again.
 
 Usage:
-    python scripts/estimate_history.py <start_url> [--budget N] [--delay 0.15] ...
-    python scripts/estimate_history.py --seed-map data/url_map.json
-    python scripts/estimate_history.py --seed-map data/gl_catalog.json
+    python scripts/create_catalogue.py <start_url> [--budget N] [--delay 0.15] ...
+    python scripts/create_catalogue.py --seed-map data/url_map.json
+    python scripts/create_catalogue.py --seed-map data/gl_catalog.json
 """
 from __future__ import annotations
 

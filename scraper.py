@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -40,6 +41,10 @@ BACKOFF_MAX = 60.0
 
 GL_PREFIX = "/gl/"
 
+# Placeholder written into the body for a page whose fetch failed; also the
+# ground-truth marker find_incomplete() scans for.
+PAGE_FAIL_MARK = "[页面获取失败"
+
 # Paragraph-level ad detection: strip any <p> whose text contains these strings.
 AD_PATTERNS = [
     "52书库",
@@ -63,26 +68,30 @@ CHAPTER_RE = re.compile(r"^第[零一二三四五六七八九十百千万亿\d]+
 
 _PROGRESS_WIDTH = 78  # characters wide before the \r clears
 _progress_active = False
+_progress_lock = threading.Lock()
+_file_log_lock = threading.Lock()
 
 
 def _progress(msg: str, newline: bool = False) -> None:
     global _progress_active
-    if newline:
-        sys.stderr.write(msg + "\n")
-        _progress_active = False
-    else:
-        sys.stderr.write(f"\r{msg:<{_PROGRESS_WIDTH}}")
-        _progress_active = True
-    sys.stderr.flush()
+    with _progress_lock:
+        if newline:
+            sys.stderr.write(msg + "\n")
+            _progress_active = False
+        else:
+            sys.stderr.write(f"\r{msg:<{_PROGRESS_WIDTH}}")
+            _progress_active = True
+        sys.stderr.flush()
 
 
 def _progress_clear(newline: bool = False) -> None:
     """Erase the in-place progress line if one is active."""
     global _progress_active
-    if not newline and _progress_active:
-        sys.stderr.write(f"\r{' ' * _PROGRESS_WIDTH}\r")
-        sys.stderr.flush()
-    _progress_active = False
+    with _progress_lock:
+        if not newline and _progress_active:
+            sys.stderr.write(f"\r{' ' * _PROGRESS_WIDTH}\r")
+            sys.stderr.flush()
+        _progress_active = False
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -93,10 +102,11 @@ class _ProgressAwareHandler(logging.StreamHandler):
     visible)."""
     def emit(self, record):
         global _progress_active
-        if _progress_active:
-            self.stream.write("\n")
-            self.stream.flush()
-            _progress_active = False
+        with _progress_lock:
+            if _progress_active:
+                self.stream.write("\n")
+                self.stream.flush()
+                _progress_active = False
         super().emit(record)
 
 
@@ -199,6 +209,8 @@ class ScrapedNovel:
     file_path: Path
     skipped: bool = False   # True if output file already existed
     failed_pages: list[str] = field(default_factory=list)  # page URLs that failed to fetch
+    page_texts: list[str] = field(default_factory=list)    # parsed text per page, in order
+    page_has_br: list[bool] = field(default_factory=list)  # page used <br> content layout
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────
@@ -340,23 +352,60 @@ def _is_ad(text: str) -> bool:
     return any(pat in text for pat in AD_PATTERNS)
 
 
-def parse_chapter_page(html: str) -> str:
-    """Extract cleaned paragraph text from one reading page."""
+class PageContent(NamedTuple):
+    text: str
+    has_br: bool   # content used <br> line breaks (older layout), ad block aside
+
+
+def parse_chapter_page(html: str) -> PageContent:
+    """Extract cleaned paragraph text from one reading page.
+
+    Handles three layouts seen across the site's history, including mixes of
+    them on a single page:
+      * newer pages wrap each paragraph in <p>;
+      * older pages have no <p> at all — lines are separated by <br>;
+      * some pages mix loose <br>-separated text with a few <p> blocks.
+    Both <p> boundaries and <br> are treated as paragraph breaks, while inline
+    markup inside a paragraph is kept together. Injected <script>/<style> ad
+    nodes (which older pages place *inside* #nr1) are dropped first.
+
+    has_br reports whether the *content* (not the trailing ad block, which
+    always carries one <br>) relied on <br> line breaks, so callers can flag
+    those pages.
+    """
     soup = BeautifulSoup(html, "lxml")
     article = soup.find("article", class_="article-content") or soup.find(id="nr1")
     if not article:
-        return ""
+        return PageContent("", False)
+
+    # Drop injected scripts/styles, the page-chrome (pager + back-to-top
+    # button), and the boilerplate ad paragraph — the old <p>-only parser
+    # skipped these by construction. Removing the ad here also keeps its <br>
+    # out of the has_br signal below.
+    for tag in article.find_all(["script", "style", "button"]):
+        tag.decompose()
+    for tag in article.select("[class*='paginat'], .go_top"):
+        tag.decompose()
+    for p in article.find_all("p"):
+        if _is_ad(p.get_text()):
+            p.decompose()
+
+    has_br = article.find("br") is not None
+
+    # <br> → hard line break; a trailing break after each <p> so adjacent
+    # paragraphs don't merge once we flatten with get_text().
+    for br in article.find_all("br"):
+        br.replace_with("\n")
+    for p in article.find_all("p"):
+        p.append("\n")
 
     paragraphs = []
-    for p in article.find_all("p"):
-        text = p.get_text()
-        if _is_ad(text):
-            continue
-        stripped = text.strip()
-        if stripped:
+    for line in article.get_text().split("\n"):
+        stripped = line.strip()
+        if stripped and not _is_ad(stripped):
             paragraphs.append(stripped)
 
-    return "\n\n".join(paragraphs)
+    return PageContent("\n\n".join(paragraphs), has_br)
 
 
 def split_into_chapters(pages: list[str]) -> list[tuple[str | None, str]]:
@@ -574,12 +623,15 @@ def open_run_log(mode: str, limit: int, output_dir: Path) -> tuple[Path, object]
     return path, fh
 
 
-def write_novel_log(fh, novel: ScrapedNovel, result: str) -> None:
-    """Write a 2–4 line summary for one novel to the run log."""
+def write_novel_log(fh, novel: ScrapedNovel, result: str, chapter_logging: bool = False) -> None:
+    """Write a summary for one novel to the run log.
+
+    By default each page's character count is listed (so a silently empty or
+    failed page shows up as 0 / ✗ instead of being hidden inside a chapter
+    total). Pass chapter_logging=True for the older per-chapter table.
+    """
     meta = novel.meta
     ts = datetime.now().strftime("%H:%M:%S")
-    chapter_count = sum(1 for h, _ in novel.chapters if h is not None)
-    has_markers = chapter_count > 0
 
     if novel.skipped:
         fh.write(f"{ts}  {meta.title} ({meta.author}) [{meta.status}]  SKIP\n")
@@ -593,6 +645,57 @@ def write_novel_log(fh, novel: ScrapedNovel, result: str) -> None:
         return
 
     file_kb = novel.file_path.stat().st_size // 1024 if novel.file_path.exists() else 0
+
+    if chapter_logging:
+        _write_chapter_table(fh, novel, result, ts, file_kb)
+    else:
+        _write_page_counts(fh, novel, result, ts, file_kb)
+
+
+def _write_page_counts(fh, novel: ScrapedNovel, result: str, ts: str, file_kb: int) -> None:
+    """Per-page character counts; '*' marks pages whose body used <br>."""
+    meta = novel.meta
+    cells: list[str] = []
+    total = n_empty = n_failed = 0
+    for i, text in enumerate(novel.page_texts):
+        if text.startswith(PAGE_FAIL_MARK):
+            cells.append("✗")
+            n_failed += 1
+            continue
+        chars = _nonws_chars(text)
+        total += chars
+        if chars == 0:
+            n_empty += 1
+        br = novel.page_has_br[i] if i < len(novel.page_has_br) else False
+        cells.append(f"{chars}{'*' if br else ''}")
+
+    flags = []
+    if n_failed:
+        flags.append(f"{n_failed}页失败")
+    if n_empty:
+        flags.append(f"{n_empty}页空白")
+    flag_str = ("  ⚠ " + " ".join(flags)) if flags else ""
+
+    fh.write(
+        f"{ts}  {meta.title} ({meta.author}) [{meta.status}]"
+        f"  {novel.page_count}p  {total}字  {file_kb}KB  {result}{flag_str}\n"
+    )
+    fh.write(f"          {meta.url}\n")
+    if cells:
+        fh.write("          页字数 (* = <br> 版式):\n")
+        cols = 12
+        for r in range(0, len(cells), cols):
+            row = "  ".join(f"{c:>6}" for c in cells[r:r + cols])
+            fh.write(f"            {row}\n")
+    fh.write("\n")
+    fh.flush()
+
+
+def _write_chapter_table(fh, novel: ScrapedNovel, result: str, ts: str, file_kb: int) -> None:
+    """Legacy per-chapter character table (--chapter-logging)."""
+    meta = novel.meta
+    chapter_count = sum(1 for h, _ in novel.chapters if h is not None)
+    has_markers = chapter_count > 0
     if has_markers:
         chapter_info = f"{novel.page_count}p→{chapter_count}章"
     else:
@@ -634,16 +737,21 @@ def write_run_footer(fh, scraped: int, skipped: int, failed: int, elapsed: float
 
 def _log_failed(url: str, reason: str) -> None:
     LOG_DIR.mkdir(exist_ok=True)
-    with FAILED_LOG.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().isoformat()}  {url}  {reason}\n")
+    with _file_log_lock:
+        with FAILED_LOG.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()}  {url}  {reason}\n")
 
 
 def _log_incomplete(url: str, out_path: Path, failed_pages: list[str]) -> None:
     LOG_DIR.mkdir(exist_ok=True)
-    with INCOMPLETE_LOG.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().isoformat()}  {url}  {len(failed_pages)} failed page(s)  {out_path}\n")
-        for u in failed_pages:
-            f.write(f"    {u}\n")
+    with _file_log_lock:
+        with INCOMPLETE_LOG.open("a", encoding="utf-8") as f:
+            f.write(
+                f"{datetime.now().isoformat()}  {url}  "
+                f"{len(failed_pages)} failed page(s)  {out_path}\n"
+            )
+            for u in failed_pages:
+                f.write(f"    {u}\n")
 
 
 def is_complete_file(path: Path) -> bool:
@@ -682,26 +790,31 @@ def _fetch_pages(
     workers: int,
     verbose: bool,
 ) -> tuple[list[str], list[str]]:
-    """Fetch all chapter pages. Returns (page_texts_in_order, failed_page_urls)."""
+    """Fetch all chapter pages.
+
+    Returns (page_texts_in_order, failed_page_urls, page_has_br_in_order).
+    """
     total = len(chapter_urls)
     w = len(str(total))
     results: list[str] = [""] * total
+    has_br: list[bool] = [False] * total
     failed: list[str] = []
     lock = threading.Lock()
     completed = 0
 
-    def _do_fetch(url: str) -> tuple[str, float, float]:
+    def _do_fetch(url: str) -> tuple[str, bool, float, float]:
         t0 = time.monotonic()
         resp = fetch(session, url)
         fetch_ms = (time.monotonic() - t0) * 1000
         t1 = time.monotonic()
-        text = parse_chapter_page(resp.text)
+        page = parse_chapter_page(resp.text)
         parse_ms = (time.monotonic() - t1) * 1000
-        return text, fetch_ms, parse_ms
+        return page.text, page.has_br, fetch_ms, parse_ms
 
-    def _record(i: int, text: str, fetch_ms: float, parse_ms: float) -> None:
+    def _record(i: int, text: str, br: bool, fetch_ms: float, parse_ms: float) -> None:
         nonlocal completed
         results[i] = text
+        has_br[i] = br
         chars = _nonws_chars(text)
         with lock:
             completed += 1
@@ -710,13 +823,13 @@ def _fetch_pages(
             f"  [{cnt:>{w}}/{total}]"
             f"  fetch {fetch_ms:5.0f}ms"
             f"  parse {parse_ms:4.0f}ms"
-            f"  {chars:5d}字",
+            f"  {chars:5d}字{'*' if br else ' '}",
             newline=verbose,
         )
 
     def _record_error(i: int, url: str, exc: Exception) -> None:
         nonlocal completed
-        results[i] = f"[页面获取失败: {url}]"
+        results[i] = f"{PAGE_FAIL_MARK}: {url}]"
         with lock:
             completed += 1
             failed.append(url)
@@ -728,8 +841,8 @@ def _fetch_pages(
             if i > 0:
                 time.sleep(DELAY_CHAPTER + random.uniform(0, DELAY_CHAPTER_JITTER))
             try:
-                text, fetch_ms, parse_ms = _do_fetch(url)
-                _record(i, text, fetch_ms, parse_ms)
+                text, br, fetch_ms, parse_ms = _do_fetch(url)
+                _record(i, text, br, fetch_ms, parse_ms)
             except Exception as e:
                 _record_error(i, url, e)
     else:
@@ -738,12 +851,12 @@ def _fetch_pages(
             for fut in as_completed(futures):
                 i = futures[fut]
                 try:
-                    text, fetch_ms, parse_ms = fut.result()
-                    _record(i, text, fetch_ms, parse_ms)
+                    text, br, fetch_ms, parse_ms = fut.result()
+                    _record(i, text, br, fetch_ms, parse_ms)
                 except Exception as e:
                     _record_error(i, chapter_urls[i], e)
 
-    return results, failed
+    return results, failed, has_br
 
 
 def scrape_novel(
@@ -801,7 +914,7 @@ def scrape_novel(
 
     total = len(meta.chapter_urls)
     log.info("Scraping '%s' — %d pages  (workers=%d)", meta.title, total, workers)
-    pages, failed_pages = _fetch_pages(session, meta.chapter_urls, workers, verbose)
+    pages, failed_pages, page_has_br = _fetch_pages(session, meta.chapter_urls, workers, verbose)
 
     chapters = split_into_chapters(pages)
     chapter_count = sum(1 for h, _ in chapters if h is not None)
@@ -826,6 +939,8 @@ def scrape_novel(
         page_count=len(pages),
         file_path=out_path,
         failed_pages=failed_pages,
+        page_texts=pages,
+        page_has_br=page_has_br,
     )
 
 

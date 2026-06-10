@@ -27,13 +27,14 @@ Stack: **Python**, `curl_cffi` (browser-impersonating HTTP, NOT `requests`),
 |------|---------|
 | `scraper.py` | Shared scraper library: HTTP fetching, page parsing, text extraction, output formatting, state handling, and run logging. It has no CLI. |
 | `scrape_from_walk.py` | Previous/next chain-walk CLI. Provides seed, forward, backward, resume, one-off download, and repair modes. |
-| `scrape_from_catalogue.py` | Downloads only live URLs listed in `data/gl_catalog.json`; default newest→oldest, with `--forward` for oldest→newest. Does not follow prev/next links. |
+| `scrape_from_catalogue.py` | Downloads live URLs from `data/gl_catalog.json`. Default: one direct newest→oldest worker. `--windscribe` adds a VPN-proxied oldest→newest worker using a collision-free shared queue. It derives resume state only from complete output files and never touches `state.json`. |
 | `scripts/create_catalogue.py` | **Catalogue builder / discovery.** Graph-crawls the whole GL catalogue into `data/gl_catalog.json` and writes its report under `reports/`. |
 | `scripts/analyze_catalogue_chains.py` | Analyses `data/gl_catalog.json`, writing its visual report under `reports/` and structured JSON under `data/`. |
 | `scripts/inspect_urls.py` | Scans `output/**/*.txt` preambles and writes `data/url_map.json`. |
 | `scripts/report_size.py` | Disk-usage summary of `output/` (total, avg, per-month). |
 | `scripts/check_incomplete.py` | Scans output for `[页面获取失败]` placeholders and lists novels needing repair. |
 | `scripts/probe_rate_limit.py` | One-shot rate-limit characterisation. Already run. |
+| `scripts/configure_windscribe.py` | One-time Windscribe CLI-only configuration: enables its HTTP proxy gateway and excludes the active Python executable from the VPN tunnel. |
 | `state.json` | Resumable state (atomic-written + `.bak`): `oldest_url`, `newest_url`, `scraped[]`. |
 | `data/gl_catalog.json` | Canonical novel list from `scripts/create_catalogue.py` (oldest-first). |
 | `data/url_map.json` | Per-downloaded-novel URL data from `scripts/inspect_urls.py`. |
@@ -207,6 +208,28 @@ both jittered.
 - Be a good citizen: single-threaded by default, jittered delays, checkpoint
   after every novel.
 
+### Windscribe dual-route catalogue mode
+
+The verified Ubuntu AMD64 CLI-only package is Windscribe `2.22.10`:
+
+```bash
+sudo apt-get install /tmp/windscribe-cli.deb
+windscribe-cli login
+python3 scripts/configure_windscribe.py
+python3 scrape_from_catalogue.py --windscribe
+```
+
+`scripts/configure_windscribe.py` enables an HTTP proxy gateway at
+`127.0.0.1:8888` and configures split tunnelling to exclude the current Python
+executable. The direct session therefore keeps the normal public IP, while the
+second session explicitly uses the Windscribe proxy. Startup compares both
+public IPs and refuses to run if they are the same.
+
+In dual mode, the direct worker claims pending URLs newest→oldest and the
+Windscribe worker claims oldest→newest. A locked deque prevents duplicate
+claims. `--workers N` applies per route, so `--windscribe --workers 3` can run
+up to three chapter requests on each IP concurrently.
+
 ### `docs/robots.txt`
 - `/gl/` is **allowed**. Honor disallows: `/e/*`, `/*?*`, `/d/*`, `/so/*`,
   `/templets`, `/404.html`, `/bookcase.html`, `/skin/52shuku/js/*`.
@@ -278,6 +301,8 @@ python3 scripts/inspect_urls.py                           # refresh data/url_map
 python3 scripts/create_catalogue.py --seed-map data/url_map.json
 # then download exactly the live catalogue URLs, newest→oldest by default:
 python3 scrape_from_catalogue.py --catalogue data/gl_catalog.json --workers 3
+# or use direct newest→oldest plus Windscribe oldest→newest:
+python3 scrape_from_catalogue.py --windscribe --workers 3
 # use --forward for oldest→newest
 python3 scripts/check_incomplete.py
 # repair incomplete downloads if needed:

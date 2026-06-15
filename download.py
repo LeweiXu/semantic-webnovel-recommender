@@ -13,20 +13,20 @@ Subcommands:
 
 Examples:
   # Download every pending novel in gl, newest first
-  python download_catalogue.py categories gl
+  python download.py categories gl
 
   # Two categories, oldest first, capped at 100 novels
-  python download_catalogue.py categories yanqing bl --forward --limit 100
+  python download.py categories yanqing bl --forward --limit 100
 
   # One novel by title (disambiguated interactively) or by URL
-  python download_catalogue.py novel "Love U2"
-  python download_catalogue.py novel https://www.52shuku.net/gl/180.html
+  python download.py novel "Love U2"
+  python download.py novel https://www.52shuku.net/gl/180.html
 
   # Repair incomplete gl downloads
-  python download_catalogue.py repair --category gl
+  python download.py repair --category gl
 
   # Split a bulk run across the direct route and a Windscribe tunnel
-  python download_catalogue.py categories all --windscribe \\
+  python download.py categories all --windscribe \\
       --windscribe-location "Singapore - SMRT"
 """
 from __future__ import annotations
@@ -108,7 +108,7 @@ def cmd_repair(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="download_catalogue.py",
+        prog="download.py",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

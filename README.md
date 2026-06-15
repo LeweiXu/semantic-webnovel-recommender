@@ -19,14 +19,14 @@ Five standalone scripts live in the repository root. Each has a comprehensive
 
 ```text
 scrape_metadata.py     Crawl metadata and catalogue graphs for selected categories
-download_catalogue.py  Download full novel text (whole categories, one title/URL, or repair)
+download.py  Download full novel text (whole categories, one title/URL, or repair)
 recommend.py           Semantic recommendations + embedding-index maintenance
 report.py              Catalogue coverage, disk usage, and incomplete-file reports
 read.py                Read a downloaded novel: track progress, copy chapters to the clipboard
 ```
 
 Run any of them with `python <script>.py --help`, and each subcommand also has
-its own help, e.g. `python download_catalogue.py categories --help`.
+its own help, e.g. `python download.py categories --help`.
 
 ## Features
 
@@ -185,8 +185,8 @@ Common recommendation filters:
 Download a recommendation by title (disambiguated interactively) or by URL:
 
 ```bash
-python download_catalogue.py novel "钓系O的端水翻车实录"
-python download_catalogue.py novel https://www.52shuku.net/gl/180.html
+python download.py novel "钓系O的端水翻车实录"
+python download.py novel https://www.52shuku.net/gl/180.html
 ```
 
 An unknown but valid URL is downloaded and registered in its category metadata
@@ -195,9 +195,9 @@ and catalogue.
 Download one or more complete categories:
 
 ```bash
-python download_catalogue.py categories gl
-python download_catalogue.py categories yanqing bl --limit 100
-python download_catalogue.py categories all
+python download.py categories gl
+python download.py categories yanqing bl --limit 100
+python download.py categories all
 ```
 
 Bulk downloads default to newest first. Use `--forward` for oldest first.
@@ -207,7 +207,7 @@ parallel reading-page requests within the active novel.
 Repair files containing failed-page markers:
 
 ```bash
-python download_catalogue.py repair --category gl
+python download.py repair --category gl
 ```
 
 Downloaded novels update their local-file status and bounded metadata record.
@@ -371,7 +371,7 @@ Both bulk downloads and metadata scraping can split work across two routes — t
 direct route plus a Windscribe tunnel — to fetch over two distinct public IPs:
 
 ```bash
-python download_catalogue.py categories all \
+python download.py categories all \
   --windscribe --windscribe-location "Singapore - SMRT"
 
 python scrape_metadata.py \

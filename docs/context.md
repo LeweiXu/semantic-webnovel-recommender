@@ -7,7 +7,7 @@ reading system. The long-term design is site-agnostic; the current scraper
 implementation supports 52shuku.
 
 The public entry points are five standalone scripts in the repository root:
-`scrape_metadata.py`, `download_catalogue.py`, `recommend.py`, `report.py`, and
+`scrape_metadata.py`, `download.py`, `recommend.py`, `report.py`, and
 `read.py`. The earlier unified `webnovel` CLI and Textual application were
 removed in favour of these focused scripts.
 
@@ -33,8 +33,8 @@ python scrape_metadata.py                          # update metadata + catalogue
 python recommend.py update                         # sync + (re)build the index
 python recommend.py like TITLE
 python recommend.py query TEXT
-python download_catalogue.py novel TARGET
-python download_catalogue.py categories gl yanqing
+python download.py novel TARGET
+python download.py categories gl yanqing
 python read.py TARGET --copy 3                      # copy next 3 chapters to the clipboard
 python report.py catalogue
 ```
@@ -46,7 +46,7 @@ Each script and each subcommand exposes a comprehensive `--help`.
 ```text
 Root scripts (entry points):
     scrape_metadata.py     -> recsys.crawl.crawl
-    download_catalogue.py  -> webnovel.downloads (+ targets, reports)
+    download.py  -> webnovel.downloads (+ targets, reports)
     recommend.py           -> recsys.cli.main
     report.py              -> webnovel.reports
     read.py                -> webnovel.library + webnovel.progress + targets

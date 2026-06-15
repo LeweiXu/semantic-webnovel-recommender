@@ -77,14 +77,14 @@ def _resolve_downloaded(target: str):
             print_candidates(resolution.candidates)
         elif resolution.url:
             print("That URL is not in the downloaded library. Download it first:")
-            print(f"  python download_catalogue.py novel {resolution.url}")
+            print(f"  python download.py novel {resolution.url}")
         else:
             print(f"No downloaded novel matched: {target}")
         return None
     path = local_path(record)
     if path is None or not path.exists():
         print(f"《{record.title}》 has metadata but no local file. Download it first:")
-        print(f"  python download_catalogue.py novel \"{record.title}\"")
+        print(f"  python download.py novel \"{record.title}\"")
         return None
     chapters = local_chapters(path)
     if not chapters:

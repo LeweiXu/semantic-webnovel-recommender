@@ -12,7 +12,7 @@ from webnovel.downloads import catalogue_urls
 from webnovel.library import local_chapters
 from webnovel.targets import resolve_target
 
-import download_catalogue
+import download
 import read
 import report
 import scrape_metadata
@@ -110,8 +110,8 @@ class ScriptParserTests(unittest.TestCase):
         )
         self.assertGreater(len(scrape_metadata.parse_categories(None)), 3)
 
-    def test_download_catalogue_subcommands_parse(self) -> None:
-        parser = download_catalogue.build_parser()
+    def test_download_subcommands_parse(self) -> None:
+        parser = download.build_parser()
         self.assertEqual(parser.parse_args(["categories", "gl"]).command, "categories")
         self.assertEqual(parser.parse_args(["novel", "Title"]).command, "novel")
         self.assertEqual(parser.parse_args(["repair"]).command, "repair")

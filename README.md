@@ -55,7 +55,7 @@ All commands below assume they are run from the repository root.
 
 ## Quick Start
 
-Download up to five novels that are not already present in `output/`:
+Download up to five novels that are not already present in `gl/`:
 
 ```bash
 python3 scrape_from_catalogue.py --limit 5
@@ -195,10 +195,11 @@ page.
 
 ## Output Format
 
-Catalogue and chain downloads are normally stored by upload month:
+Catalogue and chain downloads are stored under their category folder (the GL
+scrapers default to `gl/`), organized by upload month:
 
 ```text
-output/
+gl/
 └── YYYY-MM/
     └── title_author_status.txt
 ```
@@ -254,6 +255,17 @@ Summarize downloaded file counts and sizes:
 ```bash
 python3 scripts/report_size.py
 ```
+
+Watch `output/` alongside a scraper run and log newly completed novels:
+
+```bash
+python3 scripts/watch_output.py
+```
+
+The watcher prints an initial directory summary, then reports each new novel's
+title, chapter count, non-whitespace body character count, file size, source
+URL, integrity status, and path. Events are also appended to
+`logs/output_watcher.log` by default.
 
 Additional diagnostic scripts under `scripts/` inspect catalogue URLs, audit
 HTML line-break parsing, and probe rate-limit behavior.
@@ -325,20 +337,117 @@ Do not use `--skip-route-check` unless the routing has been verified
 independently. Windscribe behavior varies by client version, platform, protocol,
 and firewall configuration.
 
+## Recommendation System
+
+An offline, local recommender over the downloaded corpus lives in the `recsys/`
+package with the `recommend.py` entry point. It matches novels by **semantic
+similarity of their synopses** (local sentence-embeddings) plus **extracted
+`内容标签` tags** and metadata filters, with an optional **local-LLM** layer
+(Qwen on the GPU) for reranking, free-text query parsing, and explanations.
+
+Because the embedding model and LLM are heavy, the recommender uses its **own
+virtual environment** (the scraper is unaffected):
+
+```bash
+python3 -m venv ~/venvs/recsys
+# RTX 50-series (Blackwell) needs the CUDA 12.8 build first:
+~/venvs/recsys/bin/pip install torch --index-url https://download.pytorch.org/whl/cu128
+~/venvs/recsys/bin/pip install -r requirements-rec.txt
+```
+
+### Categories and storage
+
+The site has ~9 novel categories, each a self-contained folder at the repo root:
+
+```text
+gl/         metadata.jsonl   _catalog.jsonl   2015-10/*.txt …   (downloaded full text)
+yanqing/    metadata.jsonl   _catalog.jsonl   [YYYY-MM/*.txt once downloaded]
+bl/  xiandaidushi/  chongsheng/  jiakong/  jiakonglishi/  chuanyue/  wuxia/
+```
+
+- `metadata.jsonl` — the recommender's records for that category (one per novel,
+  deduplicated by URL): `source:"full"` (downloaded, synopsis from text) or
+  `source:"meta"` (landing-page-only). It is the only input to the index.
+- `_catalog.jsonl` — the crawler's resume graph (prev/next + recommendation
+  edges, confirmed 404s).
+
+### Data flow
+
+```text
+<cat>/YYYY-MM/*.txt ─(recommend.py sync)──┐
+                                          ├─► <cat>/metadata.jsonl ─(build)─► data/rec_index/
+scrape_metadata.py ─(crawl categories)───┘     (full + meta, by url)
+```
+
+`sync` and `build` are **incremental**, so a constantly growing corpus stays
+cheap to refresh:
+
+```bash
+~/venvs/recsys/bin/python recommend.py update      # sync + build (incremental)
+```
+
+### Crawling metadata across categories
+
+`scrape_metadata.py` discovers novels by prev/next chains + cross-category
+recommendation links and records each landing page's synopsis + tags (no chapter
+text) into `<category>/metadata.jsonl`. By default it crawls all categories and
+skips novels already in the store (e.g. the downloaded GL corpus).
+
+```bash
+python3 scrape_metadata.py                              # all categories
+python3 scrape_metadata.py --category yanqing,bl --limit 500
+python3 scrape_metadata.py --category bl --pages 2      # + opening excerpt for embeddings
+```
+
+### Getting recommendations
+
+```bash
+# Similar to a novel you liked (can surface cross-category matches)
+~/venvs/recsys/bin/python recommend.py like "Love U2"
+
+# Free-text description (add --parse to let the local LLM extract tags/filters)
+~/venvs/recsys/bin/python recommend.py query "clingy detective x cold ex, ABO" --parse
+
+# Filter by category / status / length / year, or boost by tags
+~/venvs/recsys/bin/python recommend.py query "重生复仇 古代宫廷" --category yanqing --status 完结
+
+# Browse by tag, or refine interactively
+~/venvs/recsys/bin/python recommend.py tags 破镜重圆 ABO
+~/venvs/recsys/bin/python recommend.py repl
+```
+
+Add `--rerank` (listwise LLM rerank of the top candidates) or `--explain` (a
+one-line "why you'd like this" per result) to any `like`/`query` run; without
+these flags no LLM is loaded. Results are marked `📖` (full text downloaded) or
+`📝` (metadata-only), with the `[category]` shown.
+
+### Downloading a recommended novel
+
+A metadata-only (`📝`) recommendation can be fetched in full from the app — it
+lands in the right category folder and its record is upgraded to `source:"full"`:
+
+```bash
+~/venvs/recsys/bin/python recommend.py download "<title or URL>"
+~/venvs/recsys/bin/python recommend.py build     # embed the new full text
+```
+
 ## Repository Layout
 
 ```text
 .
 ├── scraper.py                  Shared 52shuku fetching, parsing, output, and logging
+├── recommend.py               Recommendation-system CLI (recsys/ package)
+├── scrape_metadata.py         Multi-category metadata crawler (recsys/crawl.py)
 ├── scrape_from_catalogue.py   Stateless catalogue downloader
 ├── scrape_from_walk.py        Stateful previous/next chain walker
 ├── state.json                 Chain-walk state only
-├── requirements.txt
-├── data/                       JSON catalogues and machine-readable data
+├── requirements.txt           Scraper deps  (requirements-rec.txt = recommender deps)
+├── recsys/                     Recommendation system package
+├── data/                       JSON catalogues, machine-readable data, rec_index/
 ├── docs/                       Site reference files and project context
 ├── reports/                    Generated human-readable reports
 ├── scripts/                    Catalogue, analysis, audit, and setup utilities
-├── output/                     Downloaded novels, ignored by Git
+├── gl/ yanqing/ bl/ …          Per-category novels + metadata.jsonl, ignored by Git
 └── logs/                       Runtime and failure logs, ignored by Git
 ```
 

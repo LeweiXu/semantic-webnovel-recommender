@@ -1,4 +1,3 @@
-output/
 __pycache__/
 logs/
 *.log
@@ -6,3 +5,18 @@ logs/
 .agents/
 *.bak
 .vscode/
+
+# Per-category novel folders at the repo root (downloaded .txt + metadata.jsonl +
+# _catalog.jsonl). Anchored so only the top-level data folders are ignored.
+/gl/
+/yanqing/
+/bl/
+/xiandaidushi/
+/chongsheng/
+/jiakong/
+/jiakonglishi/
+/chuanyue/
+/wuxia/
+
+# Embedding index — regenerable via `recommend.py build`.
+data/rec_index/

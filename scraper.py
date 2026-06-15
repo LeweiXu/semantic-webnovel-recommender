@@ -24,7 +24,9 @@ from curl_cffi import requests as cffi_requests
 
 REPO_ROOT = Path(__file__).resolve().parent
 DATA_DIR = REPO_ROOT / "data"
-OUTPUT_DIR = REPO_ROOT / "output"
+# Each category lives in its own folder at the repo root (gl/ is the former
+# output/). OUTPUT_DIR keeps its name as the default for the GL-only scrapers.
+OUTPUT_DIR = REPO_ROOT / "gl"
 LOG_DIR = REPO_ROOT / "logs"
 STATE_FILE = REPO_ROOT / "state.json"
 FAILED_LOG = LOG_DIR / "failed.log"
@@ -40,6 +42,16 @@ BACKOFF_BASE = 5.0        # first-retry wait on CHALLENGED/ERROR
 BACKOFF_MAX = 60.0
 
 GL_PREFIX = "/gl/"
+
+# The site's canonical domain. Reading pages must live here; a ul.list href that
+# points anywhere else is an upstream typo (the site has been seen emitting a
+# garbled domain like "https://www.52shuk_2.html/" in place of a real page link).
+SITE_DOMAIN = "52shuku.net"
+
+# When rebuilding a novel's reading-page sequence by probing _2, _3, …, stop
+# after this many consecutive 404s (tolerates a small gap, then concludes the
+# novel has ended).
+CHAPTER_PROBE_STOP = 4
 
 # Placeholder written into the body for a page whose fetch failed; also the
 # ground-truth marker find_incomplete() scans for.
@@ -219,6 +231,21 @@ def _make_absolute(href: str, base: str) -> str:
     return href if href.startswith("http") else urljoin(base, href)
 
 
+def category_of_url(url: str) -> str | None:
+    """First path segment of a novel URL, e.g. /yanqing/02_b/x.html -> 'yanqing'."""
+    segs = [s for s in urlparse(url).path.split("/") if s]
+    return segs[0] if segs else None
+
+
+def category_dir_for_url(url: str) -> Path:
+    """The repo-root folder a novel from this URL belongs in (gl/, yanqing/, …).
+
+    Falls back to OUTPUT_DIR (gl/) when the URL has no category segment.
+    """
+    cat = category_of_url(url)
+    return REPO_ROOT / cat if cat else OUTPUT_DIR
+
+
 def _is_gl_novel_url(url: str | None) -> bool:
     """True only for /gl/... paths that are not the index page itself."""
     if not url:
@@ -228,6 +255,43 @@ def _is_gl_novel_url(url: str | None) -> bool:
         return False
     tail = path[len(GL_PREFIX):].rstrip("/")
     return bool(tail) and not re.match(r"index", tail)
+
+
+def _same_site(url: str) -> bool:
+    """True if url's host is SITE_DOMAIN or a subdomain of it."""
+    host = urlparse(url).netloc.lower().rsplit("@", 1)[-1].split(":", 1)[0]
+    return host == SITE_DOMAIN or host.endswith("." + SITE_DOMAIN)
+
+
+def _reading_base_path(landing_url: str) -> str | None:
+    """The landing path without its '.html', i.e. the stem reading pages extend.
+
+    e.g. https://www.52shuku.net/gl/huk.html -> /gl/huk
+    Returns None for a landing URL that doesn't end in '.html'.
+    """
+    path = urlparse(landing_url).path
+    if not path.endswith(".html"):
+        return None
+    return path[: -len(".html")]
+
+
+def _chapter_url_ok(landing_url: str, chapter_url: str) -> bool:
+    """True if chapter_url is a well-formed reading page of landing_url: same
+    site and path '{landing-stem}_{N}.html'. A different/garbled domain or a
+    path that doesn't extend the landing stem (an upstream typo) is rejected."""
+    base_path = _reading_base_path(landing_url)
+    if base_path is None:
+        return True  # nothing to validate the chapter link against
+    if not _same_site(chapter_url):
+        return False
+    pattern = re.escape(base_path) + r"_\d+\.html$"
+    return bool(re.match(pattern, urlparse(chapter_url).path))
+
+
+def chapter_urls_valid(landing_url: str, chapter_urls: list[str]) -> bool:
+    """True if every listed reading-page URL is a well-formed page of this
+    novel. A single malformed href makes the whole list untrustworthy."""
+    return all(_chapter_url_ok(landing_url, u) for u in chapter_urls)
 
 
 # base62 alphabet: 0-9 A-Z a-z (matches the site's id ordering, verified against
@@ -859,6 +923,49 @@ def _fetch_pages(
     return results, failed, has_br
 
 
+def rebuild_chapter_urls(
+    session: cffi_requests.Session,
+    landing_url: str,
+    max_pages: int = 2000,
+) -> list[str]:
+    """Reconstruct a novel's reading-page list when the landing page's ul.list
+    links are malformed (an upstream bug).
+
+    Probes {landing-stem}_2.html, _3.html, … in order, keeping every page that
+    exists and stopping once CHAPTER_PROBE_STOP consecutive pages 404 (a single
+    mid-run 404 is treated as a gap and skipped). Returns the discovered page
+    URLs in order; empty if the landing URL has no usable stem or no page
+    responds.
+    """
+    base = _reading_base_path(landing_url)
+    if base is None:
+        return []
+    # Build candidates from the full landing URL so scheme/host are canonical.
+    url_stem = landing_url[: -len(".html")]
+
+    urls: list[str] = []
+    consecutive_missing = 0
+    n = 2
+    while consecutive_missing < CHAPTER_PROBE_STOP and (n - 2) < max_pages:
+        if n > 2:
+            time.sleep(DELAY_CHAPTER + random.uniform(0, DELAY_CHAPTER_JITTER))
+        candidate = f"{url_stem}_{n}.html"
+        try:
+            fetch(session, candidate)
+        except FileNotFoundError:
+            consecutive_missing += 1
+        except RuntimeError as exc:
+            # Couldn't get a definitive verdict (server hung up after retries);
+            # stop here rather than guess where the novel ends.
+            log.warning("Stopping reading-page probe at %s: %s", candidate, exc)
+            break
+        else:
+            urls.append(candidate)
+            consecutive_missing = 0
+        n += 1
+    return urls
+
+
 def scrape_novel(
     session: cffi_requests.Session,
     url: str,
@@ -906,6 +1013,18 @@ def scrape_novel(
             return ScrapedNovel(meta=meta, chapters=chapters, page_count=0,
                                 file_path=out_path, skipped=True)
         log.info("Re-fetching incomplete file: %s/%s", novel_dir.name, out_path.name)
+
+    # Guard against the site listing a malformed reading-page link in ul.list
+    # (e.g. a garbled domain). If any listed page isn't a well-formed page of
+    # this novel, discard the list and rebuild it by probing _2, _3, ….
+    if meta.chapter_urls and not chapter_urls_valid(url, meta.chapter_urls):
+        bad = next(u for u in meta.chapter_urls if not _chapter_url_ok(url, u))
+        log.warning("Malformed reading-page link on %s (e.g. %s) — rebuilding by probing", url, bad)
+        meta.chapter_urls = rebuild_chapter_urls(session, url)
+        if meta.chapter_urls:
+            log.info("Rebuilt %d reading-page URL(s) for %s by probing", len(meta.chapter_urls), url)
+        else:
+            log.warning("Could not rebuild reading-page URLs for %s by probing", url)
 
     if not meta.chapter_urls:
         log.warning("No chapter URLs found for %s", url)

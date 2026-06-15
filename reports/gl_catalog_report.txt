@@ -1,13 +1,13 @@
 ======================================================================
 52shuku GL catalogue — history report
 ======================================================================
-Catalogue entries : 9753
-Live novels       : 9702
+Catalogue entries : 9754
+Live novels       : 9703
 Confirmed 404 URLs: 51
-Newest novel      : 2026年06月08日 09:23:18  相遇在秋末
+Newest novel      : 2026年06月11日 10:19:20  潮湿禁区
 Oldest novel      : 2015年10月13日 20:41:46  春风十里长青
 Span              : ~128 months (10.7 years)
-Walk wall-time    : 0s
+Walk wall-time    : 1s
 Stop reason       : exhausted (chain first, then recommendation BFS)
 
 Novels per year (by upload date):
@@ -22,10 +22,10 @@ Novels per year (by upload date):
   2023:  1153  ██████████████████████████████
   2024:  1391  █████████████████████████████████████
   2025:  1523  ████████████████████████████████████████
-  2026:   618  ████████████████
+  2026:   619  ████████████████
 
 URL schemes:
-  modern (DD_b/base62)        :  3709
+  modern (DD_b/base62)        :  3710
   other                       :  3034
   mid (/gl/b/base62)          :  1851
   old (/gl/numeric)           :  1108

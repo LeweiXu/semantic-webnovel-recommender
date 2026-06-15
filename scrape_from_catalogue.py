@@ -223,6 +223,29 @@ def detect_direct_interface() -> str:
     return DEFAULT_DIRECT_INTERFACE
 
 
+def detect_tunnel_interface() -> str:
+    """Return the up Windscribe tunnel interface (utun*/tun*/wg*).
+
+    Binding the VPN worker to this interface routes it through the tunnel
+    regardless of the default route, which Windscribe sometimes leaves only
+    half-applied (e.g. after a host VPN is toggled on/off).
+    """
+    result = subprocess.run(
+        ["ip", "-o", "-4", "addr", "show"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1].startswith(("utun", "tun", "wg")):
+            return fields[1]
+    raise RuntimeError(
+        "No Windscribe tunnel interface is up (looked for utun*/tun*/wg*). "
+        'The VPN is not connected — try: windscribe-cli connect "Singapore" stealth'
+    )
+
+
 def public_ip(session: cffi_requests.Session) -> str:
     response = session.get(PUBLIC_IP_URL, timeout=15)
     response.raise_for_status()
@@ -235,17 +258,19 @@ def public_ip(session: cffi_requests.Session) -> str:
 def verify_distinct_routes(
     direct_session: cffi_requests.Session,
     windscribe_session: cffi_requests.Session,
-    interface: str,
+    direct_interface: str,
+    tunnel_interface: str,
 ) -> None:
     """Prevent a dual run unless the two sessions use different exit IPs."""
     direct_ip = public_ip(direct_session)
     windscribe_ip = public_ip(windscribe_session)
-    log.info("Route check: direct=%s  windscribe=%s", direct_ip, windscribe_ip)
+    log.info("Route check: direct=%s (%s)  windscribe=%s (%s)",
+             direct_ip, direct_interface, windscribe_ip, tunnel_interface)
     if direct_ip == windscribe_ip:
         raise RuntimeError(
-            f"direct (bound to {interface}) and Windscribe sessions share the "
-            f"public IP {direct_ip}. The tunnel is probably down, or "
-            f"'{interface}' is not the LAN interface (see --direct-interface)."
+            f"direct ({direct_interface}) and Windscribe ({tunnel_interface}) "
+            f"sessions share the public IP {direct_ip}. The tunnel is not "
+            f"carrying traffic — reconnect Windscribe (see README/manual fix)."
         )
 
 
@@ -445,14 +470,19 @@ def main() -> int:
     windscribe_session: cffi_requests.Session | None = None
     try:
         if args.windscribe:
-            interface = args.direct_interface or detect_direct_interface()
+            direct_iface = args.direct_interface or detect_direct_interface()
             ensure_windscribe_connected(args.windscribe_location)
-            # The direct worker is pinned to the LAN interface so it bypasses
-            # the tunnel; the VPN worker takes the default route through it.
-            direct_session = cffi_requests.Session(interface=f"if!{interface}")
-            windscribe_session = cffi_requests.Session()
+            # Pin each worker to its interface: the direct worker to the LAN
+            # interface (bypasses the tunnel → real IP) and the VPN worker to
+            # the tunnel interface. Binding both avoids relying on the default
+            # route, which Windscribe can leave half-applied after a host VPN
+            # is toggled.
+            tunnel_iface = detect_tunnel_interface()
+            direct_session = cffi_requests.Session(interface=f"if!{direct_iface}")
+            windscribe_session = cffi_requests.Session(interface=f"if!{tunnel_iface}")
             if not args.skip_route_check:
-                verify_distinct_routes(direct_session, windscribe_session, interface)
+                verify_distinct_routes(
+                    direct_session, windscribe_session, direct_iface, tunnel_iface)
         else:
             direct_session = cffi_requests.Session()
     except (OSError, RuntimeError, ValueError) as exc:

@@ -1,12 +1,13 @@
 """Command-line interface for the recommendation system.
 
 Subcommands:
-  sync     output/*.txt          -> data/novel_meta.jsonl   (incremental)
-  build    data/novel_meta.jsonl -> data/rec_index/         (incremental)
+  sync     <category>/*.txt -> <category>/metadata.jsonl  (incremental)
+  build    <category>/metadata.jsonl -> data/rec_index/   (incremental)
   update   sync, then build
   like     recommend novels similar to one you name
   query    recommend novels from a free-text description
   tags     list novels carrying the given 内容标签
+  download fetch the full text of a recommended novel
   repl     interactive session (keeps context between turns)
 """
 from __future__ import annotations
@@ -276,7 +277,7 @@ def cmd_download(args) -> int:
         stats = build(model_name=args.model, device=args.device)
         print(f"reindex: {stats['embedded']} embedded, {stats['reused']} reused")
     else:
-        print("Run `webnovel index update` to embed the new full text into the index.")
+        print("Run `python recommend.py update` to embed the new full text into the index.")
     return 0
 
 

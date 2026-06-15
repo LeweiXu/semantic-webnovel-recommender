@@ -19,10 +19,7 @@ import random
 import re
 import sys
 import threading
-import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -41,6 +38,7 @@ from repo_paths import CATEGORIES  # noqa: E402
 
 from recsys import tags as tagmod  # noqa: E402
 from recsys.catalog import CatalogRecord, load_catalog, write_catalog  # noqa: E402
+from recsys.routes import Route, open_windscribe_routes  # noqa: E402
 from recsys.store import (  # noqa: E402
     EXCERPT_MAX_CHARS, NovelRecord, load_category, supersedes, write_category,
 )
@@ -149,7 +147,7 @@ def _fetch_landing(session, url: str, categories: set[str], pages: int) -> Fetch
 # ── Crawler ─────────────────────────────────────────────────────────────────
 
 class MetaCrawler:
-    def __init__(self, categories: list[str], *, pages: int = 0, delay: float = 0.4,
+    def __init__(self, categories: list[str], *, pages: int = 0, delay: float = 0.1,
                  workers: int = 1, refresh: bool = False,
                  rec_depth: int = RECOMMENDATION_BFS_DEPTH) -> None:
         self.targets = set(categories)
@@ -173,6 +171,15 @@ class MetaCrawler:
         self.visited: set[str] = set()
 
         self.fetched = self.not_found = self.errors = self.skipped = 0
+
+        # All frontier/graph/counter mutation happens under this lock; only the
+        # network fetch in each worker runs outside it. `_active` counts workers
+        # with a claimed URL still in flight, so the run ends only when the
+        # frontier is empty AND no fetch is outstanding.
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._active = 0
+        self._since_ckpt = 0
 
     # ── frontier management ──────────────────────────────────────────────
     def _enqueue_chain(self, url: str | None) -> None:
@@ -262,11 +269,13 @@ class MetaCrawler:
         for r in (res.rec_urls or ()):
             self._enqueue_rec(r, depth + 1)
 
-    def _next_batch(self, size: int) -> list[tuple[str, int]]:
-        """Pop up to `size` urls that actually need fetching; expand known nodes
-        inline. Chain frontier drains before the recommendation frontier."""
-        batch: list[tuple[str, int]] = []
-        while len(batch) < size and (self.chain_queue or self.rec_queue):
+    def _claim_next_locked(self, limit: int) -> tuple[str, int] | None:
+        """Pop the next url that actually needs fetching, expanding known nodes
+        inline. Caller must hold `self._lock`. Chain frontier drains before the
+        recommendation frontier."""
+        if limit and self.fetched >= limit:
+            return None
+        while self.chain_queue or self.rec_queue:
             if self.chain_queue:
                 url, depth = self.chain_queue.popleft(), 0
             else:
@@ -278,8 +287,8 @@ class MetaCrawler:
                 self.skipped += 1
                 self._expand(url, depth)
                 continue
-            batch.append((url, depth))
-        return batch
+            return url, depth
+        return None
 
     def checkpoint(self) -> None:
         for cat in list(self.dirty):
@@ -287,69 +296,104 @@ class MetaCrawler:
             write_catalog(cat, self.ledger[cat])
         self.dirty.clear()
 
-    def run(self, session, *, limit: int = 0,
-            stop_event: threading.Event | None = None, controls=None) -> None:
-        stop_event = controls.stop_event if controls is not None else (
-            stop_event or threading.Event()
-        )
-        network_lock = controls.network_lock if controls is not None else None
-        if controls is not None:
-            controls.register_worker()
-        with network_lock or nullcontext():
-            self.seed(session)
-        log.info("Seeded frontier: %d chain, %d rec candidates (targets: %s)",
-                 len(self.chain_queue), len(self.rec_queue), ",".join(sorted(self.targets)))
-        since_ckpt = 0
-        pool = ThreadPoolExecutor(max_workers=self.workers) if self.workers > 1 else None
-        try:
-            while not stop_event.is_set():
-                if controls is not None and not controls.safe_point(self.checkpoint):
-                    break
-                if limit and self.fetched >= limit:
-                    break
-                room = limit - self.fetched if limit else self.workers
-                batch = self._next_batch(min(self.workers, max(1, room)))
-                if not batch:
-                    break
+    def _worker(self, route: Route, *, limit: int, stop_event: threading.Event) -> None:
+        """One route's loop: claim a url (locked), fetch it (unlocked), integrate
+        the result (locked). Shared state is only ever touched under the lock."""
+        while not stop_event.is_set():
+            with self._cond:
+                item = self._claim_next_locked(limit)
+                if item is None:
+                    # No fetchable url right now. If nothing is in flight either,
+                    # the crawl is finished; otherwise wait for a peer to produce
+                    # more frontier (or time out to re-check stop_event).
+                    if self._active == 0:
+                        self._cond.notify_all()
+                        return
+                    self._cond.wait(timeout=0.5)
+                    continue
+                url, depth = item
+                self._active += 1
 
-                with network_lock or nullcontext():
-                    if pool is None:
-                        results = [(_fetch_landing(session, batch[0][0], self.targets,
-                                                   self.pages), batch[0][1])]
-                    else:
-                        futs = {pool.submit(_fetch_landing, session, u, self.targets,
-                                            self.pages): d for u, d in batch}
-                        results = [(f.result(), futs[f]) for f in futs]
+            result = _fetch_landing(route.session, url, self.targets, self.pages)
 
-                for res, depth in results:
-                    self._integrate(res, depth)
-                    since_ckpt += 1
-                    if res.status == "ok":
-                        log.info("[%s] %d fetched (q:%d/%d) %s",
-                                 parse_url_parts(res.url)[0], self.fetched,
-                                 len(self.chain_queue), len(self.rec_queue), res.url)
-
-                if since_ckpt >= CHECKPOINT_EVERY:
+            with self._cond:
+                self._integrate(result, depth)
+                self._active -= 1
+                self._since_ckpt += 1
+                if result.status == "ok":
+                    log.info("[%s] %d fetched (q:%d/%d) via %s %s",
+                             parse_url_parts(result.url)[0], self.fetched,
+                             len(self.chain_queue), len(self.rec_queue),
+                             route.label, result.url)
+                if self._since_ckpt >= CHECKPOINT_EVERY:
                     self.checkpoint()
-                    since_ckpt = 0
-                if not stop_event.is_set():
-                    delay = self.delay + random.uniform(0, self.delay)
-                    if controls is not None:
-                        controls.interruptible_wait(delay)
-                    else:
-                        stop_event.wait(delay)
+                    self._since_ckpt = 0
+                self._cond.notify_all()
+
+            if not stop_event.is_set():
+                stop_event.wait(self.delay + random.uniform(0, self.delay * 0.5))
+
+    def run(self, session, *, limit: int = 0,
+            stop_event: threading.Event | None = None, controls=None,
+            windscribe: bool = False, windscribe_location: str = "best",
+            direct_interface: str | None = None, skip_route_check: bool = False,
+            emit=None) -> None:
+        stop_event = stop_event or threading.Event()
+        emit = emit or (lambda message: log.info("%s", message))
+
+        own_sessions: list = []
+        if windscribe:
+            routes = open_windscribe_routes(
+                windscribe_location, direct_interface=direct_interface,
+                skip_route_check=skip_route_check, emit=emit,
+            )
+            own_sessions = [route.session for route in routes]
+            seed_session = routes[0].session
+        else:
+            # One shared session, `workers` threads pulling from the frontier.
+            routes = [Route("direct", session) for _ in range(self.workers)]
+            seed_session = session
+
+        try:
+            self.seed(seed_session)
+            log.info("Seeded frontier: %d chain, %d rec candidates "
+                     "(targets: %s; routes: %s)",
+                     len(self.chain_queue), len(self.rec_queue),
+                     ",".join(sorted(self.targets)),
+                     ", ".join(route.label for route in routes))
+
+            threads = [
+                threading.Thread(
+                    target=self._worker,
+                    kwargs=dict(route=route, limit=limit, stop_event=stop_event),
+                    name=f"crawl-{index}-{route.label}",
+                )
+                for index, route in enumerate(routes)
+            ]
+            try:
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    while thread.is_alive():
+                        thread.join(0.5)
+            except KeyboardInterrupt:
+                stop_event.set()
+                for thread in threads:
+                    thread.join()
+                raise
         finally:
-            if pool is not None:
-                pool.shutdown(wait=True)
             self.checkpoint()
-            if controls is not None:
-                controls.unregister_worker()
+            for sess in own_sessions:
+                sess.close()
 
 
-def crawl(categories: list[str] | None = None, *, pages: int = 0, delay: float = 0.4,
+def crawl(categories: list[str] | None = None, *, pages: int = 0, delay: float = 0.1,
           workers: int = 1, refresh: bool = False, limit: int = 0,
           rec_depth: int = RECOMMENDATION_BFS_DEPTH,
-          stop_event: threading.Event | None = None, controls=None) -> dict:
+          stop_event: threading.Event | None = None, controls=None,
+          windscribe: bool = False, windscribe_location: str = "best",
+          direct_interface: str | None = None, skip_route_check: bool = False,
+          emit=None) -> dict:
     cats = categories or list(CATEGORIES)
     crawler = MetaCrawler(
         cats,
@@ -361,7 +405,12 @@ def crawl(categories: list[str] | None = None, *, pages: int = 0, delay: float =
     )
     session = cffi_requests.Session()
     try:
-        crawler.run(session, limit=limit, stop_event=stop_event, controls=controls)
+        crawler.run(
+            session, limit=limit, stop_event=stop_event, controls=controls,
+            windscribe=windscribe, windscribe_location=windscribe_location,
+            direct_interface=direct_interface, skip_route_check=skip_route_check,
+            emit=emit,
+        )
     finally:
         session.close()
     return {

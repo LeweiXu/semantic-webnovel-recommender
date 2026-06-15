@@ -23,7 +23,10 @@ import json
 import sys
 from pathlib import Path
 
-from repo_paths import DATA_DIR, REPORTS_DIR, resolve_data_input
+try:  # standalone: `python scripts/analyze_catalogue_chains.py` (scripts/ on path)
+    from repo_paths import DATA_DIR, REPORTS_DIR, resolve_data_input
+except ImportError:  # imported as scripts.analyze_catalogue_chains (repo root on path)
+    from scripts.repo_paths import DATA_DIR, REPORTS_DIR, resolve_data_input
 
 
 def is_live(record: dict) -> bool:

@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 import tempfile
-import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bs4 import BeautifulSoup
-
 from recsys.catalog import CatalogRecord
 from recsys.store import NovelRecord
 from scraper import parse_landing
-from webnovel_app.cli import build_parser, parse_categories
-from webnovel_app.downloads import catalogue_urls
-from webnovel_app.library import local_chapters
-from webnovel_app.jobs import JobManager, JobState
-from webnovel_app.targets import resolve_target
+from webnovel.downloads import catalogue_urls
+from webnovel.library import local_chapters
+from webnovel.targets import resolve_target
+
+import download_catalogue
+import read
+import report
+import scrape_metadata
 
 
 class NavigationTests(unittest.TestCase):
@@ -86,8 +84,8 @@ class CatalogueTests(unittest.TestCase):
             "new": NovelRecord("new", category="gl", upload_date="2025年01月01日"),
             "old": NovelRecord("old", category="gl", upload_date="2020年01月01日"),
         }
-        with patch("webnovel_app.downloads.load_catalog", return_value=catalog), patch(
-            "webnovel_app.downloads.load_category", return_value=metadata
+        with patch("webnovel.downloads.load_catalog", return_value=catalog), patch(
+            "webnovel.downloads.load_category", return_value=metadata
         ):
             self.assertEqual(catalogue_urls(["gl"]), ["old", "new"])
 
@@ -98,102 +96,52 @@ class TargetTests(unittest.TestCase):
             "1": NovelRecord("1", title="Moon One"),
             "2": NovelRecord("2", title="Moon Two"),
         }
-        with patch("webnovel_app.targets.load_all", return_value=records):
+        with patch("webnovel.targets.load_all", return_value=records):
             result = resolve_target("Moon")
         self.assertIsNone(result.url)
         self.assertEqual(len(result.candidates or []), 2)
 
 
-class CliTests(unittest.TestCase):
-    def test_category_parser(self) -> None:
-        self.assertEqual(parse_categories(["gl,yanqing", "bl"]), ["gl", "yanqing", "bl"])
-        self.assertGreater(len(parse_categories("all")), 3)
-
-    def test_primary_commands_parse(self) -> None:
-        parser = build_parser()
+class ScriptParserTests(unittest.TestCase):
+    def test_scrape_metadata_categories_default_and_explicit(self) -> None:
         self.assertEqual(
-            parser.parse_args(["metadata", "crawl", "--category", "gl"]).command,
-            "crawl",
+            scrape_metadata.parse_categories(["gl,yanqing", "bl"]),
+            ["gl", "yanqing", "bl"],
         )
-        self.assertEqual(
-            parser.parse_args(["download", "novel", "Title"]).command,
-            "novel",
-        )
-        self.assertEqual(
-            parser.parse_args(["recommend", "like", "Title"]).command,
-            "like",
-        )
+        self.assertGreater(len(scrape_metadata.parse_categories(None)), 3)
+
+    def test_download_catalogue_subcommands_parse(self) -> None:
+        parser = download_catalogue.build_parser()
+        self.assertEqual(parser.parse_args(["categories", "gl"]).command, "categories")
+        self.assertEqual(parser.parse_args(["novel", "Title"]).command, "novel")
+        self.assertEqual(parser.parse_args(["repair"]).command, "repair")
+
+    def test_report_subcommands_parse(self) -> None:
+        parser = report.build_parser()
+        self.assertEqual(parser.parse_args(["catalogue"]).command, "catalogue")
+        self.assertEqual(parser.parse_args(["size"]).command, "size")
+        self.assertEqual(parser.parse_args(["chains", "--category", "gl"]).command, "chains")
+
+    def test_read_copy_flag_defaults_to_one(self) -> None:
+        parser = read.build_parser()
+        self.assertEqual(parser.parse_args(["Title", "--copy"]).copy, 1)
+        self.assertEqual(parser.parse_args(["Title", "--copy", "3"]).copy, 3)
+        self.assertIsNone(parser.parse_args(["Title"]).copy)
 
 
-class JobManagerTests(unittest.TestCase):
-    def test_exclusive_request_pauses_and_resumes_background_job(self) -> None:
-        events: list[str] = []
-        manager = JobManager(events.append)
-        ready = threading.Event()
+class ReadingProgressTests(unittest.TestCase):
+    def test_bookmark_round_trips_and_clears(self) -> None:
+        from webnovel import progress
 
-        def target(controls) -> None:
-            controls.register_worker()
-            ready.set()
-            try:
-                while controls.safe_point():
-                    controls.interruptible_wait(0.01)
-            finally:
-                controls.unregister_worker()
-
-        self.assertTrue(manager.start("test", target))
-        self.assertTrue(ready.wait(1))
-        self.assertEqual(manager.run_exclusive("preview", lambda: 42), 42)
-        self.assertEqual(manager.sync_state().state, JobState.RUNNING)
-        self.assertTrue(manager.stop())
-        self.assertTrue(manager.join(1))
-
-    def test_interactive_fetch_blocks_new_background_job_and_is_joinable(self) -> None:
-        manager = JobManager()
-        entered = threading.Event()
-        release = threading.Event()
-
-        def interactive() -> None:
-            entered.set()
-            release.wait(1)
-
-        thread = threading.Thread(
-            target=lambda: manager.run_exclusive("novel", interactive)
-        )
-        thread.start()
-        self.assertTrue(entered.wait(1))
-        self.assertTrue(manager.busy)
-        self.assertFalse(manager.start("crawl", lambda _controls: None))
-        release.set()
-        self.assertTrue(manager.wait_all(1))
-        thread.join(1)
-
-
-class TuiTests(unittest.TestCase):
-    def test_app_mounts_and_switches_reader(self) -> None:
-        from textual.widgets import ContentSwitcher
-        from webnovel_app.library import Chapter
-        from webnovel_app.tui import WebnovelApp
-
-        async def exercise() -> None:
-            app = WebnovelApp()
-            async with app.run_test(size=(100, 35)) as pilot:
-                await pilot.pause()
-                app.dispatch_command("/help")
-                app.open_reader(
-                    NovelRecord("url", title="Test"),
-                    [Chapter("第1章", "Body")],
-                )
-                self.assertEqual(
-                    app.query_one("#upper", ContentSwitcher).current,
-                    "reader",
-                )
-                app.action_leave_reader()
-                self.assertEqual(
-                    app.query_one("#upper", ContentSwitcher).current,
-                    "interaction",
-                )
-
-        asyncio.run(exercise())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reading_progress.json"
+            with patch.object(progress, "PROGRESS_PATH", path):
+                self.assertEqual(progress.get_position("u"), 0)
+                progress.set_position("u", 5, title="T", total=120)
+                self.assertEqual(progress.get_position("u"), 5)
+                self.assertIn("u", progress.all_progress())
+                self.assertTrue(progress.clear("u"))
+                self.assertEqual(progress.get_position("u"), 0)
 
 
 if __name__ == "__main__":

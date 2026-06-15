@@ -8,11 +8,10 @@
 #   ~/venvs/recsys/bin/pip install torch --index-url https://download.pytorch.org/whl/cu128
 torch
 
-# Scraper + TUI
+# Scraper
 beautifulsoup4
 curl-cffi
 lxml
-textual>=1.0
 
 # Embeddings + local LLM (rerank / query-parse / explain)
 sentence-transformers

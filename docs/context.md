@@ -6,9 +6,10 @@ This repository is a local webnovel discovery, recommendation, download, and
 reading system. The long-term design is site-agnostic; the current scraper
 implementation supports 52shuku.
 
-The public entry point is the installed `webnovel` command. Running it without
-arguments opens the persistent Textual application. Scriptable headless
-subcommands remain available through the same executable.
+The public entry points are five standalone scripts in the repository root:
+`scrape_metadata.py`, `download_catalogue.py`, `recommend.py`, `report.py`, and
+`read.py`. The earlier unified `webnovel` CLI and Textual application were
+removed in favour of these focused scripts.
 
 ## Environment
 
@@ -28,55 +29,53 @@ Install with:
 ## Public Workflow
 
 ```bash
-webnovel                         # persistent terminal application
-webnovel metadata crawl         # update metadata + catalogues
-webnovel recommend like TITLE
-webnovel recommend query TEXT
-webnovel download novel TARGET
-webnovel download categories gl yanqing
-webnovel library read TARGET
-webnovel index update
+python scrape_metadata.py                          # update metadata + catalogues
+python recommend.py update                         # sync + (re)build the index
+python recommend.py like TITLE
+python recommend.py query TEXT
+python download_catalogue.py novel TARGET
+python download_catalogue.py categories gl yanqing
+python read.py TARGET --copy 3                      # copy next 3 chapters to the clipboard
+python report.py catalogue
 ```
 
-The application has:
-
-- An upper interaction/results/reader pane.
-- A lower persistent scraper/downloader log pane.
-- At most one active 52shuku fetch workload.
-- Cooperative pause, resume, stop, checkpoint, and graceful quit.
-- Exclusive interactive previews/downloads that pause a background fetch job.
+Each script and each subcommand exposes a comprehensive `--help`.
 
 ## Architecture
 
 ```text
-pyproject.toml
-    console script: webnovel -> webnovel_app.cli:main
+Root scripts (entry points):
+    scrape_metadata.py     -> recsys.crawl.crawl
+    download_catalogue.py  -> webnovel.downloads (+ targets, reports)
+    recommend.py           -> recsys.cli.main
+    report.py              -> webnovel.reports
+    read.py                -> webnovel.library + webnovel.progress + targets
 
-webnovel_app/
-    cli.py          headless command parser and handlers
-    tui.py          persistent Textual application
-    jobs.py         single-fetch lifecycle and network exclusion
+webnovel/                  shared workflow library (no CLI/TUI)
     downloads.py    catalogue and single-novel download workflows
-    library.py      local chapter reader and live first-chapter preview
+    library.py      local chapter reader, clipboard, and live first-chapter preview
     targets.py      title/URL resolution
     reports.py      catalogue/library reports
+    progress.py     persistent per-novel reading bookmarks
 
 scraper.py          52shuku page parsing, fetching, full-text extraction, logs
 
 recsys/
-    crawl.py        multi-category metadata/catalogue graph crawler
+    crawl.py        multi-category metadata/catalogue graph crawler (concurrent)
     catalog.py      per-category crawl ledgers
     store.py        per-category recommender metadata
     extract.py      downloaded-file metadata synchronization
     index.py        incremental embedding index
     search.py       exact cosine search, tag boost, and filters
+    routes.py       direct + Windscribe-tunnel session helpers (shared)
     cli.py          recommendation command implementations
 ```
 
-The old public wrappers (`recommend.py`, `scrape_metadata.py`,
-`scrape_from_catalogue.py`, `scrape_from_walk.py`, and
-`scripts/create_catalogue.py`) were removed. Their supported operations are all
-reachable through `webnovel`.
+`recsys/routes.py` holds the Windscribe setup and interface-bound session
+helpers shared by `webnovel.downloads` and `recsys.crawl`. The earlier
+single-purpose scrapers (`scrape_from_catalogue.py`, `scrape_from_walk.py`,
+`scripts/create_catalogue.py`) were removed; their operations are reachable
+through the root scripts.
 
 ## Storage
 
@@ -114,29 +113,45 @@ It:
 5. Sends a newly discovered recommendation's previous/next links back to the
    higher-priority chain frontier.
 6. Records confirmed 404s so they are not repeatedly requested.
-7. Checkpoints periodically, before a cooperative pause, and on shutdown.
+7. Checkpoints periodically and on shutdown (`Ctrl+C`).
+
+### Concurrency
+
+The crawl runs N worker threads (one per route). Each worker loops: claim the
+next fetchable url (under a lock, expanding known nodes inline), fetch it over
+its own session (no lock held), then integrate the result (under the lock,
+enqueuing neighbours and checkpointing). All frontier/graph/counter state is
+mutated only under `MetaCrawler._lock`; only network fetches run in parallel, so
+no node is fetched twice. An `_active` in-flight counter plus a `Condition`
+ensures the run ends only when the frontier is empty and no fetch is
+outstanding. Without `--windscribe`, `--workers N` threads share one direct
+session; with `--windscribe`, two threads run the direct route and a tunnel route
+(via `recsys.routes.open_windscribe_routes`). Each route waits `--delay` (default
+0.1s, lightly jittered) between its fetches.
 
 ## Downloads
 
 Catalogue downloads derive pending work from `_catalog.jsonl` and complete
 local files.
 
-Default order is newest to oldest. Headless `--forward` selects oldest to
-newest. Optional Windscribe mode uses direct and VPN-bound sessions sharing one
-collision-free queue.
+Default order is newest to oldest. `--forward` selects oldest to newest.
+Optional Windscribe mode uses direct and VPN-bound sessions sharing one
+collision-free queue. `Ctrl+C` stops claiming new work and waits for active
+novel downloads to finish before exit.
 
-The terminal application serializes all site access:
+## Reading
 
-- Only one metadata or category job may run.
-- A live preview or individual novel download pauses that job at a safe
-  request boundary.
-- Interactive requests are also serialized with each other.
-- `Ctrl+S` or `/stop` stops new work and preserves completed output.
-- `Ctrl+Q` waits for checkpointing and any current novel write before exit.
+`read.py` reads downloaded novels only. It keeps a per-novel bookmark in
+`data/reading_progress.json` (via `webnovel.progress`) and copies the next N
+chapters from the bookmark to the system clipboard, advancing the bookmark so
+repeated runs serve successive chapters. On WSL2 the clipboard is the Windows
+clipboard (`clip.exe`). This supports reading in an external pinyin/dictionary
+annotation app.
 
 ## Recommender
 
-The recommender implementation is intentionally independent of the TUI.
+The recommender implementation is independent of the download and reading
+workflows.
 
 It embeds:
 
@@ -153,9 +168,8 @@ filters. Index updates reuse unchanged vectors based on content hashes.
 
 ## Logging
 
-`scraper.py` retains the existing operational and run-log behavior. In the TUI,
-the stream logger and transient page progress callback are redirected to the
-lower pane. File logs continue to be written normally.
+`scraper.py` retains the existing operational and run-log behavior: file logs
+and run-log footers are written normally during crawls and downloads.
 
 ## Verification
 
@@ -164,11 +178,11 @@ Network-free checks:
 ```bash
 ~/venvs/recsys/bin/python -m unittest discover -s tests -v
 ~/venvs/recsys/bin/python -m py_compile \
-  scraper.py recsys/*.py webnovel_app/*.py scripts/*.py
+  scraper.py recsys/*.py webnovel/*.py scripts/*.py *.py
 ```
 
 The `Love U2` recommendation regression is:
 
 ```bash
-webnovel recommend like "Love U2" -n 3
+python recommend.py like "Love U2" -n 3
 ```

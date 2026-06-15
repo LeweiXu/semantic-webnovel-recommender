@@ -19,7 +19,8 @@ logs/
 /chuanyue/
 /wuxia/
 
-# Embedding index - regenerable via `webnovel index rebuild`.
+# Embedding index - regenerable via `python recommend.py update`.
 data/rec_index/
 
-*.egg-info/
+# Personal reading bookmarks (read.py).
+data/reading_progress.json

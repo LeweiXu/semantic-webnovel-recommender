@@ -13,14 +13,10 @@ dependencies = [
     "curl-cffi",
     "lxml",
     "numpy",
-    "textual>=1.0",
 ]
-
-[project.scripts]
-webnovel = "webnovel_app.cli:main"
 
 [tool.setuptools]
 py-modules = ["scraper"]
 
 [tool.setuptools.packages.find]
-include = ["recsys*", "scripts*", "webnovel_app*"]
+include = ["recsys*", "scripts*", "webnovel*"]

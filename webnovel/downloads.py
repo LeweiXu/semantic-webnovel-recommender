@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import random
-import shutil
-import subprocess
 import threading
 import time
 from collections import deque
@@ -15,6 +13,7 @@ from curl_cffi import requests as cffi_requests
 
 from recsys.catalog import CatalogRecord, load_catalog, write_catalog
 from recsys.extract import parse_txt
+from recsys.routes import open_windscribe_routes
 from recsys.store import load_category, upsert_category
 from scraper import (
     DELAY_NOVEL,
@@ -34,7 +33,6 @@ from scraper import (
 from scripts.repo_paths import CATEGORIES, category_dir
 
 log = logging.getLogger("webnovel.download")
-PUBLIC_IP_URL = "https://api.ipify.org"
 
 
 @dataclass
@@ -170,72 +168,6 @@ def catalogue_urls(categories: list[str]) -> list[str]:
     )
 
 
-def _windscribe_cli(*args: str) -> subprocess.CompletedProcess[str]:
-    binary = shutil.which("windscribe-cli")
-    if not binary:
-        raise RuntimeError("windscribe-cli is not installed")
-    return subprocess.run(
-        [binary, *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
-
-def _ensure_windscribe(location: str) -> tuple[str, str]:
-    status = _windscribe_cli("status")
-    text = f"{status.stdout}\n{status.stderr}"
-    if status.returncode or "Login state: Logged in" not in text:
-        raise RuntimeError("Windscribe is not logged in")
-    if "Connect state: Connected:" not in text:
-        result = _windscribe_cli("connect", location)
-        if result.returncode:
-            raise RuntimeError((result.stdout + result.stderr).strip())
-    firewall = _windscribe_cli("firewall", "off")
-    if firewall.returncode:
-        raise RuntimeError("Could not disable the Windscribe firewall")
-
-    route = subprocess.run(
-        ["ip", "route", "show", "default"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    direct = "eth0"
-    for line in route.stdout.splitlines():
-        fields = line.split()
-        if "dev" in fields:
-            candidate = fields[fields.index("dev") + 1]
-            if not candidate.startswith(("utun", "tun", "wg")):
-                direct = candidate
-                break
-    links = subprocess.run(
-        ["ip", "-o", "-4", "addr", "show"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    tunnel = next(
-        (
-            line.split()[1]
-            for line in links.stdout.splitlines()
-            if len(line.split()) > 1
-            and line.split()[1].startswith(("utun", "tun", "wg"))
-        ),
-        "",
-    )
-    if not tunnel:
-        raise RuntimeError("No Windscribe tunnel interface is active")
-    return direct, tunnel
-
-
-def _public_ip(session: cffi_requests.Session) -> str:
-    response = session.get(PUBLIC_IP_URL, timeout=15)
-    response.raise_for_status()
-    return response.text.strip()
-
-
 def _process_queue(
     label: str,
     queue: DownloadQueue,
@@ -343,18 +275,18 @@ def download_categories(
     sessions: list[tuple[str, cffi_requests.Session, bool]] = []
     try:
         if windscribe:
-            direct, tunnel = _ensure_windscribe(windscribe_location)
-            direct = direct_interface or direct
-            direct_session = cffi_requests.Session(interface=f"if!{direct}")
-            vpn_session = cffi_requests.Session(interface=f"if!{tunnel}")
-            if not skip_route_check:
-                direct_ip, vpn_ip = _public_ip(direct_session), _public_ip(vpn_session)
-                emit(f"Routes: direct={direct_ip}  windscribe={vpn_ip}")
-                if direct_ip == vpn_ip:
-                    raise RuntimeError("Direct and Windscribe routes have the same public IP")
+            # Direct route runs newest→oldest, the tunnel oldest→newest, so the
+            # two ends of the shared queue are consumed without collisions.
+            routes = open_windscribe_routes(
+                windscribe_location,
+                direct_interface=direct_interface,
+                skip_route_check=skip_route_check,
+                emit=emit,
+            )
+            directions = {"direct": False, "windscribe": True}
             sessions = [
-                ("direct", direct_session, False),
-                ("windscribe", vpn_session, True),
+                (route.label, route.session, directions[route.label])
+                for route in routes
             ]
         else:
             sessions = [("direct", cffi_requests.Session(), forward)]

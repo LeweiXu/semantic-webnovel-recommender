@@ -1,7 +1,7 @@
 # Webnovel
 
-A persistent terminal application for discovering, recommending, downloading,
-and reading web novels.
+A small set of command-line scripts for discovering, recommending, downloading,
+and reading web novels. Everything runs locally and keeps its data on disk.
 
 The project is intended to grow into a site-adapter-based scraper for multiple
 web-novel sites. The current implementation supports the novel categories on
@@ -12,25 +12,33 @@ gl  yanqing  bl  xiandaidushi  chongsheng
 jiakong  jiakonglishi  chuanyue  wuxia
 ```
 
+## Scripts
+
+Five standalone scripts live in the repository root. Each has a comprehensive
+`--help`:
+
+```text
+scrape_metadata.py     Crawl metadata and catalogue graphs for selected categories
+download_catalogue.py  Download full novel text (whole categories, one title/URL, or repair)
+recommend.py           Semantic recommendations + embedding-index maintenance
+report.py              Catalogue coverage, disk usage, and incomplete-file reports
+read.py                Read a downloaded novel: track progress, copy chapters to the clipboard
+```
+
+Run any of them with `python <script>.py --help`, and each subcommand also has
+its own help, e.g. `python download_catalogue.py categories --help`.
+
 ## Features
 
-- Crawls metadata across selected categories.
+- Crawls metadata across selected categories, following previous/next chains and
+  recommendation links, and records confirmed 404 pages.
 - Produces both recommender metadata and resumable download catalogues.
-- Discovers novels through previous/next chains and recommendation links.
-- Records confirmed 404 pages so they are not repeatedly requested.
 - Recommends novels using local semantic embeddings, tags, and filters.
 - Downloads a single title, a direct URL, selected categories, or everything.
-- Reads downloaded novels chapter by chapter in the terminal.
-- Fetches a bounded first-chapter preview for metadata-only novels.
-- Keeps recommendations and reading usable while one background fetch job runs.
-- Shows scraper/downloader logs in a dedicated live pane.
-- Pauses the background fetch job before an interactive network request.
-- Gracefully checkpoints and stops active work without leaving the application.
-- Copies one or more chapters to the clipboard.
-- Reports catalogue coverage, broken chains, incomplete files, and disk usage.
+- Reads downloaded novels with a persistent per-novel bookmark and copies the
+  next N chapters straight to the clipboard.
+- Reports catalogue coverage, incomplete files, and disk usage.
 - Supports an optional direct plus Windscribe dual-route bulk downloader.
-
-Downloaded novels and generated metadata remain local.
 
 ## Environment
 
@@ -54,92 +62,19 @@ python3 -m venv ~/venvs/recsys
 ~/venvs/recsys/bin/pip install -e .
 ```
 
-`requirements.txt` includes the scraper and TUI dependencies as well as NumPy,
+`requirements.txt` includes the scraper dependencies as well as NumPy,
 sentence-transformers, Transformers, and the optional local-LLM dependencies.
 
-Activate the environment, then run the installed command from any directory:
+Activate the environment, then run the scripts from the repository root:
 
 ```bash
 source ~/venvs/recsys/bin/activate
-webnovel
+python recommend.py query "破镜重圆，刑侦，ABO"
 ```
 
-## Terminal Application
-
-Running `webnovel` without arguments opens the persistent full-screen
-application:
-
-```bash
-webnovel
-```
-
-The upper pane holds the command transcript, recommendation/library results,
-and reader. The lower pane continuously shows operational logs and page
-progress. Only one background 52shuku fetch job is allowed at a time.
-
-Enter a plain reading description to run a semantic recommendation query, or
-use slash commands:
-
-```text
-/like TITLE                  Recommend books similar to a title
-/query DESCRIPTION           Semantic recommendation query
-/tags TAG[,TAG]              Browse books carrying all tags
-/library [TEXT]              Browse metadata and downloaded books
-/info [N|TITLE|URL]          Show a result's metadata
-/read [N|TITLE|URL]          Read locally or fetch a first-chapter preview
-/download [N|TITLE|URL]      Download one novel
-/crawl [cats] [limit]        Update metadata and catalogues
-/download-all [cats] [limit] Download pending novels
-/job  /pause  /resume  /stop
-/help  /clear  /quit
-```
-
-Recommendation and library results are keyboard-selectable. Press Enter to
-show the selected record; `/read 3` or `/download 3` acts on result 3.
-
-Reader keys:
-
-```text
-[ / ]        Previous / next chapter
-Esc          Return to the interaction pane
-```
-
-Global keys:
-
-```text
-Ctrl+K       Focus the command input
-Ctrl+P       Pause or resume the active fetch job
-Ctrl+S       Gracefully stop and checkpoint the active fetch job
-Ctrl+Q       Stop/checkpoint if needed, then quit
-```
-
-If `/read` needs a live preview or `/download` requests one novel while a
-metadata/category job is active, the application pauses that job at the next
-safe request boundary, runs the interactive request exclusively, then resumes.
-
-## Headless CLI
-
-The same executable retains scriptable subcommands:
-
-```text
-webnovel
-├── metadata crawl|sync-files|status|migrate-legacy-gl
-├── download novel|categories|repair
-├── recommend like|query|tags|repl
-├── library list|info|read
-├── index status|update|rebuild
-├── report catalogue|chains|incomplete|size|urls
-├── watch
-└── admin windscribe|audit
-```
-
-Use `--help` at any level:
-
-```bash
-webnovel --help
-webnovel metadata crawl --help
-webnovel recommend query --help
-```
+The editable install (`pip install -e .`) makes the `recsys`, `scraper`,
+`scripts`, and `webnovel` packages importable. The scripts are run directly with
+`python <script>.py` from the repository root.
 
 ## Recommended Workflow
 
@@ -148,79 +83,85 @@ webnovel recommend query --help
 Create or update metadata and catalogues for every category:
 
 ```bash
-webnovel metadata crawl
+python scrape_metadata.py
 ```
 
 Select categories:
 
 ```bash
-webnovel metadata crawl \
-  --category yanqing,bl
+python scrape_metadata.py --category yanqing,bl
 ```
 
 Store a bounded opening excerpt from the first two reading pages:
 
 ```bash
-webnovel metadata crawl \
-  --category all \
-  --pages 2
+python scrape_metadata.py --category all --pages 2
 ```
 
 Useful options:
 
 ```text
---category CATEGORY          Repeatable or comma-separated; default is all
+--category CATS              Repeatable or comma-separated; default is all
 --pages N                    Opening reading pages retained as an excerpt
 --limit N                    Maximum new landing pages fetched
---delay SECONDS              Jittered delay between fetch batches
---workers N                  Concurrent landing-page requests
+--delay SECONDS              Base delay between fetches per route (default 0.1)
+--workers N                  Concurrent landing-page requests on the direct route
 --refresh                    Re-fetch known records
 --recommendation-depth N     Maximum recommendation BFS depth
+--windscribe                 Split fetches across direct + Windscribe routes
+--windscribe-location LOC    Windscribe location (default: best)
 ```
 
 The crawler always prioritizes previous/next chain links. Recommendation links
-are explored only after the chain frontier is exhausted. A newly discovered
-recommendation contributes its previous/next links back to the higher-priority
-chain frontier.
+are explored only after the chain frontier is exhausted. The category index page
+is checked on every run for new uploads; known catalogue nodes are expanded
+without another request, while confirmed 404 records are skipped.
 
-The category index page is checked on every run for new uploads. Known
-catalogue nodes are expanded without another request, while confirmed 404
-records are skipped.
+Pass `--windscribe` to roughly double throughput by fetching over two distinct
+public IPs (the direct route plus a Windscribe tunnel), one worker per route.
+Both routes share a single crawl graph guarded by a lock; only the network
+fetches run concurrently. See the [Windscribe](#windscribe) section for setup.
 
-After upgrading from the old GL-only navigation parser, run `--refresh` once
-for any non-GL test data crawled before this refactor:
+After upgrading from the old GL-only navigation parser, run `--refresh` once for
+any non-GL data crawled before that change.
+
+### 2. Build The Index
+
+Embed the crawled metadata so recommendations can run:
 
 ```bash
-webnovel metadata crawl \
-  --category yanqing \
-  --refresh
+python recommend.py update      # sync downloaded files, then (re)build the index
+python recommend.py build       # build the index only
 ```
 
-### 2. Get Recommendations
+`recommend.py sync` extracts metadata from downloaded `<category>/*.txt` files;
+`build` reuses vectors whose URL and content hash are unchanged and embeds only
+new or changed metadata. `build --rebuild` recomputes everything.
+
+### 3. Get Recommendations
 
 Find books similar to a known title:
 
 ```bash
-webnovel recommend like "Love U2"
+python recommend.py like "Love U2"
 ```
 
 Describe what you want:
 
 ```bash
-webnovel recommend query \
-  "破镜重圆，刑侦，ABO，前任重逢"
+python recommend.py query "破镜重圆，刑侦，ABO，前任重逢"
 ```
 
 Browse tags:
 
 ```bash
-webnovel recommend tags 破镜重圆 ABO
+python recommend.py tags 破镜重圆 ABO
 ```
 
 Keep the model and previous result set loaded:
 
 ```bash
-webnovel recommend repl
+python recommend.py repl
 ```
 
 Common recommendation filters:
@@ -234,25 +175,18 @@ Common recommendation filters:
 --year 2020..2025          Inclusive range
 --tags TAG1,TAG2           Required/boosted tags
 --exclude-author NAME      Exclude authors
---parse                     Let the local LLM parse a free-text query
---rerank                    Local-LLM listwise reranking
---explain                   Local-LLM recommendation explanations
+--parse                    Let the local LLM parse a free-text query
+--rerank                   Local-LLM listwise reranking
+--explain                  Local-LLM recommendation explanations
 ```
 
-### 3. Download Novels
+### 4. Download Novels
 
-Download a recommendation by title:
-
-```bash
-webnovel download novel \
-  "钓系O的端水翻车实录"
-```
-
-Download a direct URL:
+Download a recommendation by title (disambiguated interactively) or by URL:
 
 ```bash
-webnovel download novel \
-  https://www.52shuku.net/gl/180.html
+python download_catalogue.py novel "钓系O的端水翻车实录"
+python download_catalogue.py novel https://www.52shuku.net/gl/180.html
 ```
 
 An unknown but valid URL is downloaded and registered in its category metadata
@@ -261,96 +195,88 @@ and catalogue.
 Download one or more complete categories:
 
 ```bash
-webnovel download categories gl
-
-webnovel download categories \
-  yanqing bl --limit 100
-
-webnovel download categories all
+python download_catalogue.py categories gl
+python download_catalogue.py categories yanqing bl --limit 100
+python download_catalogue.py categories all
 ```
 
 Bulk downloads default to newest first. Use `--forward` for oldest first.
-Complete local files and confirmed 404 entries are skipped.
+Complete local files and confirmed 404 entries are skipped. `--workers` controls
+parallel reading-page requests within the active novel.
 
-`--workers` controls parallel reading-page requests within the active novel. It
-does not start that number of unrelated novel downloads.
+Repair files containing failed-page markers:
+
+```bash
+python download_catalogue.py repair --category gl
+```
 
 Downloaded novels update their local-file status and bounded metadata record.
 They do not automatically rebuild the embedding index:
 
 ```bash
-webnovel index status
-webnovel index update
+python recommend.py update
 ```
 
-Repair files containing failed-page markers:
+### 5. Read And Annotate
+
+`read.py` is built for reading Chinese in a separate annotation app (pinyin /
+dictionary lookup). It remembers where you are in each novel and serves the next
+N chapters straight to the clipboard so you can paste them in. On WSL2 the
+clipboard is the Windows clipboard (via `clip.exe`).
+
+The bookmark for each novel lives in `data/reading_progress.json` and advances as
+you copy, so re-running the command keeps handing you the next chapters.
 
 ```bash
-webnovel download repair \
-  --category gl
+# Where am I in this novel?
+python read.py "Love U2"
+
+# Copy the next chapter to the clipboard and advance the bookmark
+python read.py "Love U2" --copy
+
+# Copy the next 3 chapters and advance
+python read.py "Love U2" --copy 3
+
+# Jump to chapter 12, then copy 5 chapters from there
+python read.py "Love U2" --chapter 12 --copy 5
+
+# Peek ahead WITHOUT moving the bookmark
+python read.py "Love U2" --copy 2 --no-advance
+
+# Print to the terminal instead of the clipboard
+python read.py "Love U2" --copy --stdout
+
+# List chapters (▸ marks the next to read), or start over
+python read.py "Love U2" --list
+python read.py "Love U2" --reset
+
+# Saved progress across all novels
+python read.py --progress
 ```
 
-## Reading And Library
+A novel must be downloaded before it can be read. Clipboard backends are
+attempted in this order: `clip.exe`, `wl-copy`, `xclip`, `xsel`, `pbcopy`.
 
-Search local metadata:
+### 6. Reports
 
 ```bash
-webnovel library list "刑侦"
-webnovel library list --downloaded
-webnovel library info "Love U2"
+# Per-category catalogue, metadata, and downloaded counts
+python report.py catalogue
+
+# Downloaded disk usage
+python report.py size
+
+# Incomplete downloaded files (optionally dump the affected URLs)
+python report.py incomplete --urls reports/incomplete_urls.txt
+
+# Prev/next chain continuity from the crawl graph
+python report.py chains --category gl
 ```
 
-Open the interactive reader:
-
-```bash
-webnovel library read "Love U2"
-```
-
-Reader commands:
-
-```text
-next / n           Next chapter
-previous / p       Previous chapter
-goto N / g N       Jump to chapter N
-copy N / c N       Copy current chapter and the following N-1 chapters
-all / a            Print the whole novel
-quit / q           Exit
-```
-
-Non-interactive examples:
-
-```bash
-# Print chapter 12
-webnovel library read "Love U2" --chapter 12
-
-# Copy chapters 12 through 16
-webnovel library read \
-  "Love U2" --chapter 12 --copy 5
-
-# Print the full novel for redirection or piping
-webnovel library read "Love U2" --full
-```
-
-Clipboard backends are attempted in this order:
-
-```text
-clip.exe  wl-copy  xclip  xsel  pbcopy
-```
-
-On the current WSL2 environment, `clip.exe` is used.
-
-If a novel has metadata but has not been downloaded, `library read` fetches a
-temporary live preview. It requests pages until the second chapter heading so
-the complete first logical chapter can be shown. The default safety limit is 10
-reading pages:
-
-```bash
-webnovel library read \
-  "metadata-only title" --page-limit 15
-```
-
-For chapterless novels, the preview displays text up to the page limit. A
-warning is printed when the safety limit truncates the preview.
+The `chains` report walks each category's `_catalog.jsonl` and prints its
+previous/next chains: unbroken reciprocal segments, confirmed-404 and
+non-reciprocal boundaries, and segments merged for display across a shared
+break. Categories with no catalogue yet are noted and skipped.
 
 ## How The Recommender Works
 
@@ -376,38 +302,21 @@ optional local-LLM parsing, reranking, or explanation
 
 ### Embedding Input
 
-`embed_text()` combines:
+`embed_text()` combines the title, extracted tags, one-line description, cleaned
+synopsis, and at most `EXCERPT_MAX_CHARS` characters of the opening excerpt. The
+complete downloaded novel body is never embedded.
 
-1. Title
-2. Extracted tags
-3. One-line description
-4. Cleaned synopsis
-5. At most `EXCERPT_MAX_CHARS` characters of the opening excerpt
-
-The complete downloaded novel body is never embedded.
-
-Metadata crawls normally use only the landing page. Passing `--pages N` lets
-the crawler fetch the first few reading pages for a bounded opening excerpt.
-Downloaded-file synchronization can recover the same bounded opening excerpt
-from the local file.
+Metadata crawls normally use only the landing page. Passing `--pages N` lets the
+crawler fetch the first few reading pages for a bounded opening excerpt.
+Downloaded-file synchronization (`recommend.py sync`) can recover the same
+bounded excerpt from the local file.
 
 ### Ranking
 
-`like <title>` uses that title's existing vector as the query.
-
-`query <text>` embeds the user's description. Every stored vector is compared
-with an exact NumPy matrix-vector product. At the current corpus size, an
-approximate-nearest-neighbor database is unnecessary.
-
-The final score is:
-
-```text
-semantic cosine similarity + tag-overlap boost
-```
-
-Filters are applied before results are returned. Chapter count is used for
-downloaded novels; metadata-only records fall back to reading-page count as a
-length proxy.
+`like <title>` uses that title's existing vector as the query. `query <text>`
+embeds the description and compares it against every stored vector with an exact
+NumPy matrix-vector product. The final score is semantic cosine similarity plus a
+tag-overlap boost; filters are applied before results are returned.
 
 ### Optional Local LLM
 
@@ -426,13 +335,10 @@ Each metadata record stores a SHA-1 hash of `embed_text()`. The index manifest
 maps URL to that hash.
 
 ```bash
-webnovel index status
-webnovel index update
-webnovel index rebuild
+python recommend.py sync     # downloaded files -> metadata store
+python recommend.py build    # metadata store  -> embedding index
+python recommend.py update   # sync, then build
 ```
-
-`index update` reuses vectors whose URL and content hash are unchanged and
-embeds only new or changed metadata. `index rebuild` recomputes everything.
 
 ## Storage Layout
 
@@ -444,80 +350,41 @@ gl/
 ├── _catalog.jsonl
 └── YYYY-MM/
     └── title_author_status.txt
-
-yanqing/
-├── metadata.jsonl
-├── _catalog.jsonl
-└── YYYY-MM/*.txt
 ```
 
-`metadata.jsonl` contains one recommender record per URL:
+`metadata.jsonl` contains one recommender record per URL (metadata, synopsis,
+tags, description, optional excerpt, `source: "meta"|"full"`, local file path,
+and embedding content hash). `_catalog.jsonl` contains the resumable
+crawl/download graph (URL, category, `fetch_status`, previous/next URLs,
+recommendation URLs, and whether metadata was recorded).
 
-- Metadata fields and synopsis
-- Tags, one-line description, and intent
-- Optional bounded excerpt
-- `source: "meta"` or `source: "full"`
-- Local file path when downloaded
-- Embedding content hash
+`source: "full"` indicates a verified local file. It does not mean the full body
+is included in the embedding input.
 
-`_catalog.jsonl` contains the resumable crawl/download graph:
-
-- URL and category
-- `fetch_status: "ok"` or `"not_found"`
-- Previous and next URLs
-- Recommendation URLs
-- Whether metadata was recorded
-
-`source: "full"` indicates that the novel has a verified local file. It does
-not mean the full body is included in the embedding input.
-
-The legacy `data/gl_catalog.json` can be imported once:
-
-```bash
-webnovel metadata migrate-legacy-gl
-```
-
-## Reports And Monitoring
-
-```bash
-# Per-category catalogue, metadata, and downloaded counts
-webnovel report catalogue
-
-# Previous/next chain continuity
-webnovel report chains --category gl --write
-
-# Incomplete downloaded files
-webnovel report incomplete \
-  --urls reports/incomplete_urls.txt
-
-# Downloaded disk usage
-webnovel report size
-
-# URL structure report for one category
-webnovel report urls --category gl
-
-# Watch a scraper run
-webnovel watch --output gl
-```
-
-The watcher prints an initial size/count summary and reports every stable new
-file with its title, chapter count, character count, size, source URL, integrity
-status, and path.
+The embedding index lives in `data/rec_index/` and is regenerable with
+`python recommend.py update`. Reading bookmarks live in
+`data/reading_progress.json`. Both are git-ignored.
 
 ## Windscribe
 
-Bulk category downloads can split work between two routes:
+Both bulk downloads and metadata scraping can split work across two routes — the
+direct route plus a Windscribe tunnel — to fetch over two distinct public IPs:
 
 ```bash
-webnovel download categories all \
-  --windscribe \
-  --windscribe-location "Singapore - SMRT"
+python download_catalogue.py categories all \
+  --windscribe --windscribe-location "Singapore - SMRT"
+
+python scrape_metadata.py \
+  --windscribe --windscribe-location "Singapore - SMRT"
 ```
 
-- Direct route: newest toward oldest
-- Windscribe route: oldest toward newest
-- A shared queue prevents duplicate claims
-- Public IPs are compared before downloading
+- **Downloads** share one queue: the direct route works newest→oldest, the
+  tunnel oldest→newest, so the two ends are consumed without duplicate claims.
+- **Scraping** builds one crawl graph from two worker threads (one per route).
+  All frontier/graph/counter mutation happens under a lock; only the network
+  fetches run concurrently, so no node is fetched twice. Each route honours its
+  own `--delay` (default 0.1s), so two routes roughly double throughput.
+- Public IPs are compared before the run (skip with `--skip-route-check`).
 
 The implementation binds sessions to the LAN and tunnel interfaces. It disables
 the Windscribe firewall because that firewall blocks the interface-bound direct
@@ -527,24 +394,16 @@ route. Re-enable it after the run when required:
 windscribe-cli firewall on
 ```
 
-Advanced setup remains available through:
-
-```bash
-webnovel admin windscribe -- --port 8888
-```
-
 ## Rate Limits And Interruptions
 
 The scraper uses `curl-cffi` browser impersonation, response classification,
-retry backoff, and delays between novels.
+retry backoff, and delays between novels. Use conservative worker counts:
+repeated missing-page requests are more likely to trigger rate limiting than
+requests for valid pages.
 
-Use conservative worker counts. Repeated missing-page requests are more likely
-to trigger rate limiting than requests for valid pages.
-
-Metadata crawling checkpoints its JSONL files periodically, before a requested
-pause, and on shutdown. Bulk downloads stop claiming new novels after a stop
-request and wait for active novel downloads to finish. The TUI's `Ctrl+S` and
-`/stop` use this same cooperative path.
+Metadata crawling checkpoints its JSONL files periodically and on shutdown
+(`Ctrl+C`). Bulk downloads stop claiming new novels after an interrupt and wait
+for active novel downloads to finish.
 
 ## Development
 
@@ -558,13 +417,13 @@ Compile-check all Python modules:
 
 ```bash
 ~/venvs/recsys/bin/python -m py_compile \
-  scraper.py recsys/*.py webnovel_app/*.py scripts/*.py
+  scraper.py recsys/*.py webnovel/*.py scripts/*.py *.py
 ```
 
 The scraper currently contains 52shuku-specific HTML and URL logic. Supporting
 another site should be done by moving those rules behind a site-adapter
 interface while retaining the shared download, storage, recommendation, and
-library workflows.
+reading workflows.
 
 ## Responsible Use
 

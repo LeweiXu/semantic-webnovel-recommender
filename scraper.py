@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared parsing, fetching, output, state, and logging for 52shuku scrapers."""
+"""Shared parsing, fetching, output, and logging for 52shuku scrapers."""
 from __future__ import annotations
 
 import json
@@ -28,7 +28,6 @@ DATA_DIR = REPO_ROOT / "data"
 # output/). OUTPUT_DIR keeps its name as the default for the GL-only scrapers.
 OUTPUT_DIR = REPO_ROOT / "gl"
 LOG_DIR = REPO_ROOT / "logs"
-STATE_FILE = REPO_ROOT / "state.json"
 FAILED_LOG = LOG_DIR / "failed.log"
 INCOMPLETE_LOG = LOG_DIR / "incomplete.log"
 IMPERSONATE = "chrome124"
@@ -42,6 +41,10 @@ BACKOFF_BASE = 5.0        # first-retry wait on CHALLENGED/ERROR
 BACKOFF_MAX = 60.0
 
 GL_PREFIX = "/gl/"
+SUPPORTED_CATEGORIES = {
+    "gl", "yanqing", "bl", "xiandaidushi", "chongsheng",
+    "jiakong", "jiakonglishi", "chuanyue", "wuxia",
+}
 
 # The site's canonical domain. Reading pages must live here; a ul.list href that
 # points anywhere else is an upstream typo (the site has been seen emitting a
@@ -82,10 +85,20 @@ _PROGRESS_WIDTH = 78  # characters wide before the \r clears
 _progress_active = False
 _progress_lock = threading.Lock()
 _file_log_lock = threading.Lock()
+_progress_callback = None
+
+
+def set_progress_callback(callback) -> None:
+    """Redirect transient page progress to an application-owned log pane."""
+    global _progress_callback
+    _progress_callback = callback
 
 
 def _progress(msg: str, newline: bool = False) -> None:
     global _progress_active
+    if _progress_callback is not None:
+        _progress_callback(msg.strip())
+        return
     with _progress_lock:
         if newline:
             sys.stderr.write(msg + "\n")
@@ -99,6 +112,9 @@ def _progress(msg: str, newline: bool = False) -> None:
 def _progress_clear(newline: bool = False) -> None:
     """Erase the in-place progress line if one is active."""
     global _progress_active
+    if _progress_callback is not None:
+        _progress_active = False
+        return
     with _progress_lock:
         if not newline and _progress_active:
             sys.stderr.write(f"\r{' ' * _PROGRESS_WIDTH}\r")
@@ -246,15 +262,29 @@ def category_dir_for_url(url: str) -> Path:
     return REPO_ROOT / cat if cat else OUTPUT_DIR
 
 
-def _is_gl_novel_url(url: str | None) -> bool:
-    """True only for /gl/... paths that are not the index page itself."""
+def is_novel_landing_url(
+    url: str | None,
+    categories: set[str] | None = None,
+) -> bool:
+    """True for a supported 52shuku novel landing page."""
     if not url:
         return False
-    path = urlparse(url).path
-    if not path.startswith(GL_PREFIX):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not _same_site(url):
         return False
-    tail = path[len(GL_PREFIX):].rstrip("/")
-    return bool(tail) and not re.match(r"index", tail)
+    segs = [segment for segment in parsed.path.split("/") if segment]
+    if len(segs) < 2 or not segs[-1].endswith(".html"):
+        return False
+    allowed = categories if categories is not None else SUPPORTED_CATEGORIES
+    if segs[0] not in allowed:
+        return False
+    name = segs[-1][:-5]
+    return bool(name) and not name.startswith("index") and not re.search(r"_\d+$", name)
+
+
+def _is_gl_novel_url(url: str | None) -> bool:
+    """Backward-compatible GL-only landing-page check."""
+    return is_novel_landing_url(url, {"gl"})
 
 
 def _same_site(url: str) -> bool:
@@ -390,7 +420,9 @@ def parse_landing(html: str, url: str) -> NovelMeta:
                 continue
             target_url = _make_absolute(a["href"], url)
             target_title = a.get_text(strip=True)
-            if _is_gl_novel_url(target_url):
+            current_category = category_of_url(url)
+            allowed = {current_category} if current_category else None
+            if is_novel_landing_url(target_url, allowed):
                 if is_prev:
                     prev_url, prev_title = target_url, target_title
                 else:
@@ -605,35 +637,7 @@ def update_nav_in_file(file_path: Path, direction: str, nav_title: str | None, n
     return changed
 
 
-# ── State ──────────────────────────────────────────────────────────────────────
-
-def load_state() -> dict:
-    for path in (STATE_FILE, STATE_FILE.with_suffix(".json.bak")):
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                log.warning("%s is corrupt — trying backup", path.name)
-                continue
-    return {}
-
-
-def save_state(state: dict) -> None:
-    """Atomically persist state. state.json now holds the whole scraped-set and
-    is rewritten after every novel, so a kill mid-write must not corrupt it:
-    write to a temp file, fsync, keep the previous version as .bak, then
-    os.replace() (atomic rename on the same filesystem)."""
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    data = json.dumps(state, ensure_ascii=False, indent=2)
-    tmp = STATE_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    if STATE_FILE.exists():
-        os.replace(STATE_FILE, STATE_FILE.with_suffix(".json.bak"))
-    os.replace(tmp, STATE_FILE)
-
+# ── File helpers ───────────────────────────────────────────────────────────────
 
 def source_url_from_file(path: Path) -> str | None:
     """Read the 来源 (source URL) line from a scraped .txt preamble."""
@@ -648,21 +652,6 @@ def source_url_from_file(path: Path) -> str | None:
     except OSError:
         return None
     return None
-
-
-def backfill_scraped(state: dict, output_dir: Path) -> None:
-    """One-time migration: populate state['scraped'] (the set of all scraped
-    source URLs) from existing output files. No-op once the key exists."""
-    if "scraped" in state:
-        return
-    urls = set()
-    for p in output_dir.rglob("*.txt"):
-        u = source_url_from_file(p)
-        if u:
-            urls.add(u)
-    state["scraped"] = sorted(urls)
-    save_state(state)
-    log.info("Backfilled scraped-set: %d novels from existing files.", len(state["scraped"]))
 
 
 # ── Run log ────────────────────────────────────────────────────────────────────

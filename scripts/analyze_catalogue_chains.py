@@ -283,7 +283,8 @@ def internal_break_text(info: dict) -> str:
 
 
 def render_report(chains: list[dict], by_url: dict[str, dict],
-                  live: dict[str, dict], strict_chain_count: int | None = None) -> str:
+                  live: dict[str, dict], strict_chain_count: int | None = None,
+                  title: str = "gl") -> str:
     lines: list[str] = []
     append = lines.append
     missing_boundaries = sum(
@@ -313,7 +314,7 @@ def render_report(chains: list[dict], by_url: dict[str, dict],
     )
 
     append("=" * 88)
-    append("52shuku GL catalogue - prev/next chain analysis")
+    append(f"52shuku {title} catalogue - prev/next chain analysis")
     append("=" * 88)
     append(f"Catalogue entries : {len(by_url)}")
     append(f"Live novels       : {len(live)}")

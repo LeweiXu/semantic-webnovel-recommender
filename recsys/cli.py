@@ -276,7 +276,7 @@ def cmd_download(args) -> int:
         stats = build(model_name=args.model, device=args.device)
         print(f"reindex: {stats['embedded']} embedded, {stats['reused']} reused")
     else:
-        print("Run `recommend.py build` to embed the new full text into the index.")
+        print("Run `webnovel index update` to embed the new full text into the index.")
     return 0
 
 

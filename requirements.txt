@@ -1,3 +1,28 @@
+# Webnovel dependencies — heavy; install into a DEDICATED venv,
+# e.g.  python3 -m venv ~/venvs/recsys
+# Then install the project with `pip install -e .` and run `webnovel`.
+#
+# PyTorch must match the GPU. For RTX 50-series (Blackwell, sm_120) install the
+# CUDA 12.8 build FIRST from the PyTorch index, otherwise the generic wheel will
+# lack sm_120 kernels:
+#   ~/venvs/recsys/bin/pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch
+
+# Scraper + TUI
 beautifulsoup4
 curl-cffi
 lxml
+textual>=1.0
+
+# Embeddings + local LLM (rerank / query-parse / explain)
+sentence-transformers
+transformers>=4.45
+accelerate
+
+# Numerics
+numpy
+
+# Reserved for the optional lexical/BM25 hybrid signal (not required by the
+# current embedding+tags pipeline)
+jieba
+rank-bm25

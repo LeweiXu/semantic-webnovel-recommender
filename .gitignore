@@ -4,6 +4,7 @@ logs/
 .codex/
 .agents/
 *.bak
+*.egg-info/
 .vscode/
 
 # Per-category novel folders at the repo root (downloaded .txt + metadata.jsonl +
@@ -18,5 +19,7 @@ logs/
 /chuanyue/
 /wuxia/
 
-# Embedding index — regenerable via `recommend.py build`.
+# Embedding index - regenerable via `webnovel index rebuild`.
 data/rec_index/
+
+*.egg-info/

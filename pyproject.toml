@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webnovel-library"
+version = "0.1.0"
+description = "Interactive webnovel metadata, recommendation, download, and reading tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "curl-cffi",
+    "lxml",
+    "numpy",
+    "textual>=1.0",
+]
+
+[project.scripts]
+webnovel = "webnovel_app.cli:main"
+
+[tool.setuptools]
+py-modules = ["scraper"]
+
+[tool.setuptools.packages.find]
+include = ["recsys*", "scripts*", "webnovel_app*"]

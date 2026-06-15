@@ -10,8 +10,7 @@ Two artifacts per category, both resumable:
   * <category>/metadata.jsonl — recommender records (source="meta")
   * <category>/_catalog.jsonl — the crawl graph + confirmed 404s
 
-Mirrors the chain-first-then-recommendation-BFS strategy of
-scripts/create_catalogue.py, generalized to any category.
+Uses a chain-first-then-recommendation-BFS strategy across all categories.
 """
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -34,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from scraper import (  # noqa: E402
-    IMPERSONATE, REQUEST_TIMEOUT, fetch, parse_chapter_page, parse_landing,
+    IMPERSONATE, REQUEST_TIMEOUT, fetch, is_novel_landing_url,
+    parse_chapter_page, parse_landing,
 )
 from repo_paths import CATEGORIES  # noqa: E402
 
@@ -66,21 +67,7 @@ def parse_url_parts(url: str) -> tuple[str | None, str | None, str | None]:
 
 
 def is_novel_landing(url: str | None, categories: set[str] | None = None) -> bool:
-    """True for a novel landing page in an allowed category (rejects index pages,
-    chapter pages `_N.html`, and author `/zuozhe/` links)."""
-    if not url:
-        return False
-    path = urlparse(url).path
-    segs = [s for s in path.split("/") if s]
-    if len(segs) < 2 or not segs[-1].endswith(".html"):
-        return False
-    cat = segs[0]
-    if categories is not None and cat not in categories:
-        return False
-    name = segs[-1][:-5]
-    if name.startswith("index") or _CHAPTER_RE.search(name):
-        return False
-    return True
+    return is_novel_landing_url(url, categories)
 
 
 def parse_recommendations(html: str, base_url: str, categories: set[str]) -> list[str]:
@@ -239,10 +226,15 @@ class MetaCrawler:
         cat = parse_url_parts(url)[0]
         if self.refresh:
             return False
-        if url in self.store.get(cat, {}):
-            return True
         led = self.ledger.get(cat, {}).get(url)
-        return bool(led and led.fetch_status == "not_found")
+        if led and led.fetch_status == "not_found":
+            return True
+        return bool(
+            led
+            and led.fetch_status == "ok"
+            and led.has_meta
+            and url in self.store.get(cat, {})
+        )
 
     def _integrate(self, res: FetchResult, depth: int) -> None:
         cat = parse_url_parts(res.url)[0] or ""
@@ -296,15 +288,23 @@ class MetaCrawler:
         self.dirty.clear()
 
     def run(self, session, *, limit: int = 0,
-            stop_event: threading.Event | None = None) -> None:
-        stop_event = stop_event or threading.Event()
-        self.seed(session)
+            stop_event: threading.Event | None = None, controls=None) -> None:
+        stop_event = controls.stop_event if controls is not None else (
+            stop_event or threading.Event()
+        )
+        network_lock = controls.network_lock if controls is not None else None
+        if controls is not None:
+            controls.register_worker()
+        with network_lock or nullcontext():
+            self.seed(session)
         log.info("Seeded frontier: %d chain, %d rec candidates (targets: %s)",
                  len(self.chain_queue), len(self.rec_queue), ",".join(sorted(self.targets)))
         since_ckpt = 0
         pool = ThreadPoolExecutor(max_workers=self.workers) if self.workers > 1 else None
         try:
             while not stop_event.is_set():
+                if controls is not None and not controls.safe_point(self.checkpoint):
+                    break
                 if limit and self.fetched >= limit:
                     break
                 room = limit - self.fetched if limit else self.workers
@@ -312,13 +312,14 @@ class MetaCrawler:
                 if not batch:
                     break
 
-                if pool is None:
-                    results = [(_fetch_landing(session, batch[0][0], self.targets,
-                                               self.pages), batch[0][1])]
-                else:
-                    futs = {pool.submit(_fetch_landing, session, u, self.targets,
-                                        self.pages): d for u, d in batch}
-                    results = [(f.result(), futs[f]) for f in futs]
+                with network_lock or nullcontext():
+                    if pool is None:
+                        results = [(_fetch_landing(session, batch[0][0], self.targets,
+                                                   self.pages), batch[0][1])]
+                    else:
+                        futs = {pool.submit(_fetch_landing, session, u, self.targets,
+                                            self.pages): d for u, d in batch}
+                        results = [(f.result(), futs[f]) for f in futs]
 
                 for res, depth in results:
                     self._integrate(res, depth)
@@ -332,21 +333,35 @@ class MetaCrawler:
                     self.checkpoint()
                     since_ckpt = 0
                 if not stop_event.is_set():
-                    stop_event.wait(self.delay + random.uniform(0, self.delay))
+                    delay = self.delay + random.uniform(0, self.delay)
+                    if controls is not None:
+                        controls.interruptible_wait(delay)
+                    else:
+                        stop_event.wait(delay)
         finally:
             if pool is not None:
                 pool.shutdown(wait=True)
             self.checkpoint()
+            if controls is not None:
+                controls.unregister_worker()
 
 
 def crawl(categories: list[str] | None = None, *, pages: int = 0, delay: float = 0.4,
           workers: int = 1, refresh: bool = False, limit: int = 0,
-          stop_event: threading.Event | None = None) -> dict:
+          rec_depth: int = RECOMMENDATION_BFS_DEPTH,
+          stop_event: threading.Event | None = None, controls=None) -> dict:
     cats = categories or list(CATEGORIES)
-    crawler = MetaCrawler(cats, pages=pages, delay=delay, workers=workers, refresh=refresh)
+    crawler = MetaCrawler(
+        cats,
+        pages=pages,
+        delay=delay,
+        workers=workers,
+        refresh=refresh,
+        rec_depth=rec_depth,
+    )
     session = cffi_requests.Session()
     try:
-        crawler.run(session, limit=limit, stop_event=stop_event)
+        crawler.run(session, limit=limit, stop_event=stop_event, controls=controls)
     finally:
         session.close()
     return {

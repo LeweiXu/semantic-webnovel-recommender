@@ -181,6 +181,11 @@ class MetaCrawler:
         self._active = 0
         self._since_ckpt = 0
 
+    @property
+    def total_metadata(self) -> int:
+        """Current number of metadata records across the selected categories."""
+        return sum(len(records) for records in self.store.values())
+
     # ── frontier management ──────────────────────────────────────────────
     def _enqueue_chain(self, url: str | None) -> None:
         if url and url not in self.scheduled and is_novel_landing(url, self.targets):
@@ -321,8 +326,10 @@ class MetaCrawler:
                 self._active -= 1
                 self._since_ckpt += 1
                 if result.status == "ok":
-                    log.info("[%s] %d fetched (q:%d/%d) via %s %s",
-                             parse_url_parts(result.url)[0], self.fetched,
+                    log.info("[%s] %d metadata, %d fetched this run "
+                             "(q:%d/%d) via %s %s",
+                             parse_url_parts(result.url)[0], self.total_metadata,
+                             self.fetched,
                              len(self.chain_queue), len(self.rec_queue),
                              route.label, result.url)
                 if self._since_ckpt >= CHECKPOINT_EVERY:
@@ -414,6 +421,7 @@ def crawl(categories: list[str] | None = None, *, pages: int = 0, delay: float =
     finally:
         session.close()
     return {
+        "total_metadata": crawler.total_metadata,
         "fetched": crawler.fetched,
         "not_found": crawler.not_found,
         "errors": crawler.errors,

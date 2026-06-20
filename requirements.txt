@@ -25,3 +25,6 @@ numpy
 # current embedding+tags pipeline)
 jieba
 rank-bm25
+
+# TTS audiobook generation
+edge-tts

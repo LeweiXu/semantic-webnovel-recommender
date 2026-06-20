@@ -23,10 +23,24 @@ download.py  Download full novel text (whole categories, one title/URL, or repai
 recommend.py           Semantic recommendations + embedding-index maintenance
 report.py              Catalogue coverage, disk usage, and incomplete-file reports
 read.py                Read a downloaded novel: track progress, copy chapters to the clipboard
+tts.py                 Turn English TXT/EPUB novels into MP3 audio with edge-tts
 ```
 
 Run any of them with `python <script>.py --help`, and each subcommand also has
 its own help, e.g. `python download.py categories --help`.
+
+## Reading app
+
+For comfortable reading, [`reader-app/`](reader-app/README.md) is a local web app
+that renders downloaded novels with offline **pinyin ruby** and **hover
+dictionary** definitions, in a paper-themed reader that remembers your place. It
+shares the same `data/reading_progress.json` bookmark as `read.py`, so the two
+stay in sync.
+
+```bash
+~/venvs/recsys/bin/python reader-app/setup.py    # one time
+~/venvs/recsys/bin/python reader-app/serve.py     # opens http://localhost:8000
+```
 
 ## Features
 
@@ -231,10 +245,10 @@ you copy, so re-running the command keeps handing you the next chapters.
 # Where am I in this novel?
 python read.py "Love U2"
 
-# Copy the next chapter to the clipboard and advance the bookmark
+# Copy the synopsis + next chapter to the clipboard and advance the bookmark
 python read.py "Love U2" --copy
 
-# Copy the next 3 chapters and advance
+# Copy the synopsis + next 3 chapters and advance, if starting at chapter 1
 python read.py "Love U2" --copy 3
 
 # Jump to chapter 12, then copy 5 chapters from there
@@ -242,6 +256,9 @@ python read.py "Love U2" --chapter 12 --copy 5
 
 # Peek ahead WITHOUT moving the bookmark
 python read.py "Love U2" --copy 2 --no-advance
+
+# Disable synopsis prepending when starting at chapter 1
+python read.py "Love U2" --copy 2 --no-synopsis
 
 # Print to the terminal instead of the clipboard
 python read.py "Love U2" --copy --stdout
@@ -257,7 +274,52 @@ python read.py --progress
 A novel must be downloaded before it can be read. Clipboard backends are
 attempted in this order: `clip.exe`, `wl-copy`, `xclip`, `xsel`, `pbcopy`.
 
-### 6. Reports
+### 6. Text To Speech
+
+`tts.py` turns an English `.txt` or `.epub` novel into an MP3 using `edge-tts`.
+It is aimed at your local EPUB/TXT library rather than the 52shuku workflow.
+
+For EPUB input, the script extracts the spine-ordered chapter text into a
+temporary `.tts.txt` file, runs TTS from that TXT, then removes the temporary TXT
+when the run finishes. If the run is interrupted, generated audio chunks are
+kept so re-running the same command can resume.
+
+```bash
+# List available Edge voices
+python tts.py --list-voices
+
+# Dry-run EPUB extraction and chunking without calling edge-tts
+python tts.py "/mnt/c/Users/lewei/OneDrive - UWA/Documents/Novels/book.epub" \
+  --dry-run
+
+# Generate an MP3 beside the input file
+python tts.py "/mnt/c/Users/lewei/OneDrive - UWA/Documents/Novels/book.epub" \
+  --voice en-US-AriaNeural
+
+# Slow the narration slightly
+python tts.py book.txt --voice en-US-GuyNeural --rate=-10%
+```
+
+Useful options:
+
+```text
+--voice VOICE          Edge voice, default en-US-AriaNeural
+--rate +/-N%           Speech rate
+--volume +/-N%         Volume adjustment
+--pitch +/-NHz         Pitch adjustment
+--chunk-chars N        Text characters per TTS request
+--keep-txt             Keep the temporary EPUB-extracted TXT
+--keep-chunks          Keep generated chunk MP3s after successful combine
+--force                Regenerate existing chunks instead of resuming
+```
+
+`ffmpeg` is required to combine the per-chunk MP3 files:
+
+```bash
+sudo apt install ffmpeg
+```
+
+### 7. Reports
 
 ```bash
 # Per-category catalogue, metadata, and downloaded counts

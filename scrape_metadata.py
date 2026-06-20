@@ -142,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted; the latest checkpoint has been written.")
         return 130
     print(
-        f"Metadata crawl: {stats['fetched']} fetched, {stats['not_found']} not found, "
+        f"Metadata crawl: {stats['total_metadata']} metadata total, "
+        f"{stats['fetched']} fetched this run, {stats['not_found']} not found, "
         f"{stats['errors']} errors, {stats['skipped']} known nodes traversed"
     )
     return 1 if stats["errors"] else 0

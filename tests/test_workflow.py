@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import zipfile
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,13 +12,14 @@ from recsys.catalog import CatalogRecord
 from recsys.store import NovelRecord
 from scraper import parse_landing
 from webnovel.downloads import catalogue_urls
-from webnovel.library import local_chapters
+from webnovel.library import Chapter, local_chapters, local_synopsis
 from webnovel.targets import resolve_target
 
 import download
 import read
 import report
 import scrape_metadata
+import tts
 
 
 class NavigationTests(unittest.TestCase):
@@ -72,6 +76,30 @@ Second body
         self.assertEqual([chapter.title for chapter in chapters], ["第1章 One", "第2章 Two"])
         self.assertEqual(chapters[0].body, "First body")
 
+    def test_saved_file_extracts_synopsis_after_preamble(self) -> None:
+        text = """标题：Test
+作者：A
+来源：https://www.52shuku.net/gl/test.html
+
+[ＧＬ百合] 《Test》作者：A【完结】
+
+简介：Synopsis body.
+
+════════════════════════════════════════
+
+第1章 One
+
+First body
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "novel.txt"
+            path.write_text(text, encoding="utf-8")
+            synopsis = local_synopsis(path)
+        self.assertIsNotNone(synopsis)
+        self.assertEqual(synopsis.title, "Synopsis")
+        self.assertIn("简介：Synopsis body.", synopsis.body)
+        self.assertNotIn("标题：Test", synopsis.body)
+
 
 class CatalogueTests(unittest.TestCase):
     def test_catalogue_urls_are_oldest_first_before_queue_direction(self) -> None:
@@ -88,6 +116,26 @@ class CatalogueTests(unittest.TestCase):
             "webnovel.downloads.load_category", return_value=metadata
         ):
             self.assertEqual(catalogue_urls(["gl"]), ["old", "new"])
+
+
+class MetadataCrawlerTests(unittest.TestCase):
+    def test_total_metadata_counts_all_selected_category_stores(self) -> None:
+        from recsys.crawl import MetaCrawler
+
+        stores = {
+            "gl": {
+                "g1": NovelRecord("g1", category="gl"),
+                "g2": NovelRecord("g2", category="gl"),
+            },
+            "yanqing": {
+                "y1": NovelRecord("y1", category="yanqing"),
+            },
+        }
+        with patch("recsys.crawl.load_category", side_effect=lambda cat: stores[cat]), patch(
+            "recsys.crawl.load_catalog", return_value={}
+        ):
+            crawler = MetaCrawler(["gl", "yanqing"])
+        self.assertEqual(crawler.total_metadata, 3)
 
 
 class TargetTests(unittest.TestCase):
@@ -128,6 +176,10 @@ class ScriptParserTests(unittest.TestCase):
         self.assertEqual(parser.parse_args(["Title", "--copy", "3"]).copy, 3)
         self.assertIsNone(parser.parse_args(["Title"]).copy)
 
+    def test_read_no_synopsis_flag(self) -> None:
+        parser = read.build_parser()
+        self.assertTrue(parser.parse_args(["Title", "--no-synopsis"]).no_synopsis)
+
 
 class ReadingProgressTests(unittest.TestCase):
     def test_bookmark_round_trips_and_clears(self) -> None:
@@ -142,6 +194,115 @@ class ReadingProgressTests(unittest.TestCase):
                 self.assertIn("u", progress.all_progress())
                 self.assertTrue(progress.clear("u"))
                 self.assertEqual(progress.get_position("u"), 0)
+
+    def test_copy_payload_prepends_synopsis_only_from_chapter_one(self) -> None:
+        chapters = [
+            Chapter("第1章 One", "First"),
+            Chapter("第2章 Two", "Second"),
+        ]
+        synopsis = Chapter("Synopsis", "Intro")
+        self.assertEqual(
+            read._payload_for_span(
+                chapters, 0, 1, synopsis=synopsis, include_synopsis=True
+            ),
+            "Synopsis\n\nIntro\n\n第1章 One\n\nFirst",
+        )
+        self.assertEqual(
+            read._payload_for_span(
+                chapters, 1, 2, synopsis=synopsis, include_synopsis=True
+            ),
+            "第2章 Two\n\nSecond",
+        )
+        self.assertEqual(
+            read._payload_for_span(
+                chapters, 0, 1, synopsis=synopsis, include_synopsis=False
+            ),
+            "第1章 One\n\nFirst",
+        )
+
+
+class TtsTests(unittest.TestCase):
+    def _write_epub(self, path: Path) -> None:
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("mimetype", "application/epub+zip")
+            zf.writestr(
+                "META-INF/container.xml",
+                """<?xml version="1.0"?>
+                <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+                  <rootfiles>
+                    <rootfile full-path="OPS/content.opf"
+                      media-type="application/oebps-package+xml"/>
+                  </rootfiles>
+                </container>
+                """,
+            )
+            zf.writestr(
+                "OPS/content.opf",
+                """<?xml version="1.0"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <manifest>
+                    <item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="c2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="c1"/>
+                    <itemref idref="c2"/>
+                  </spine>
+                </package>
+                """,
+            )
+            zf.writestr(
+                "OPS/chapter1.xhtml",
+                "<html><body><h1>Chapter One</h1><p>Hello world.</p></body></html>",
+            )
+            zf.writestr(
+                "OPS/chapter2.xhtml",
+                "<html><body><h1>Chapter Two</h1><p>Goodbye.</p></body></html>",
+            )
+
+    def test_epub_to_text_uses_spine_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "book.epub"
+            self._write_epub(path)
+            with redirect_stderr(StringIO()):
+                text = tts.epub_to_text(path)
+        self.assertLess(text.index("Chapter One"), text.index("Chapter Two"))
+        self.assertIn("Hello world.", text)
+
+    def test_epub_dry_run_removes_temporary_txt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "book.epub"
+            self._write_epub(path)
+            err = StringIO()
+            with redirect_stderr(err):
+                code = tts.main([str(path), "--dry-run"])
+            self.assertEqual(code, 0)
+            self.assertFalse(path.with_suffix(".tts.txt").exists())
+            self.assertIn("TTS plan:", err.getvalue())
+
+    def test_chunking_respects_limit(self) -> None:
+        chunks = tts.split_text("One. Two. Three.\n\nFour.", 12)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertTrue(all(len(chunk) <= 12 for chunk in chunks))
+
+    def test_concat_temp_output_keeps_audio_extension(self) -> None:
+        calls = []
+
+        def fake_run(cmd, check):
+            calls.append(cmd)
+            Path(cmd[-1]).write_bytes(b"audio")
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            chunk = base / "chunk.mp3"
+            chunk.write_bytes(b"audio")
+            output = base / "book.mp3"
+            with patch("tts.shutil.which", return_value="/usr/bin/ffmpeg"), patch(
+                "tts.subprocess.run", side_effect=fake_run
+            ):
+                tts.concat_audio([chunk], output)
+            self.assertTrue(output.exists())
+            self.assertTrue(calls[0][-1].endswith(".tmp.mp3"))
 
 
 if __name__ == "__main__":

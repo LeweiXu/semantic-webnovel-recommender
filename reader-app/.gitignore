@@ -1,0 +1,12 @@
+# Reader-app build + dependency artifacts (regenerable via setup.py / serve.py).
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+
+# tsc -b byproducts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# NOTE: data/cedict_ts.u8 is intentionally NOT ignored — it is vendored so the
+# app works fully offline. Do not add it here.

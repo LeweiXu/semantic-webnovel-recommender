@@ -60,6 +60,31 @@ def local_chapters(path: Path) -> list[Chapter]:
     return [Chapter("Full text", raw)] if raw else []
 
 
+def local_synopsis(path: Path) -> Chapter | None:
+    """Return the text between the generated preamble and first chapter page."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    divider = "═" * 10
+    source_index = text.find("\n来源：")
+    if source_index < 0:
+        source_index = text.find("来源：")
+    if source_index < 0:
+        return None
+    start = text.find("\n", source_index + 1)
+    if start < 0:
+        return None
+    end = text.find(divider, start)
+    raw = text[start:end if end >= 0 else None].strip()
+    if not raw:
+        return None
+    lines = [line.rstrip() for line in raw.splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    body = "\n".join(lines).strip()
+    return Chapter("Synopsis", body) if body else None
+
+
 def live_first_chapter(url: str, page_limit: int = 10) -> tuple[str, bool]:
     session = cffi_requests.Session()
     try:

@@ -10,10 +10,10 @@ The bookmark for each novel lives in data/reading_progress.json and advances as
 you copy, so re-running the command keeps handing you the next chapters.
 
 Examples:
-  # Copy the next chapter to the clipboard and advance the bookmark
+  # Copy the synopsis + next chapter to the clipboard and advance the bookmark
   python read.py "Love U2" --copy
 
-  # Copy the next 3 chapters and advance
+  # Copy the synopsis + next 3 chapters and advance, if starting at chapter 1
   python read.py "Love U2" --copy 3
 
   # Jump to chapter 12, then copy 5 chapters from there
@@ -32,14 +32,25 @@ Examples:
 
   # Show saved progress across all novels
   python read.py --progress
+
+  # Open the reading-room web app (optionally jumping to a novel's bookmark)
+  python read.py --gui
+  python read.py "Love U2" --gui
 """
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from webnovel import progress
-from webnovel.library import Chapter, clipboard_copy, local_chapters, local_path
+from webnovel.library import (
+    Chapter,
+    clipboard_copy,
+    local_chapters,
+    local_path,
+    local_synopsis,
+)
 from webnovel.targets import choose_resolution, print_candidates
 
 
@@ -63,7 +74,7 @@ def _show_all_progress() -> int:
 
 
 def _resolve_downloaded(target: str):
-    """Return (record, chapters) for a downloaded novel, or None after printing why."""
+    """Return (record, chapters, synopsis) for a downloaded novel, or None."""
     resolution = choose_resolution(target, downloaded_only=True, interactive=sys.stdin.isatty())
     record = resolution.record
     if record is None and resolution.url:
@@ -90,7 +101,7 @@ def _resolve_downloaded(target: str):
     if not chapters:
         print(f"No readable chapters found in {path}.")
         return None
-    return record, chapters
+    return record, chapters, local_synopsis(path)
 
 
 def _print_status(record, chapters: list[Chapter], position: int) -> None:
@@ -111,11 +122,26 @@ def _list_chapters(record, chapters: list[Chapter], position: int) -> None:
         print(f"  {marker} {index + 1:>4}. {chapter.title}")
 
 
+def _payload_for_span(
+    chapters: list[Chapter],
+    position: int,
+    end: int,
+    *,
+    synopsis: Chapter | None,
+    include_synopsis: bool,
+) -> str:
+    sections: list[str] = []
+    if include_synopsis and position == 0 and synopsis is not None:
+        sections.append(synopsis.text())
+    sections.extend(chapter.text() for chapter in chapters[position:end])
+    return "\n\n".join(sections)
+
+
 def cmd_read(args) -> int:
     resolved = _resolve_downloaded(args.target)
     if resolved is None:
         return 1
-    record, chapters = resolved
+    record, chapters, synopsis = resolved
     total = len(chapters)
 
     # Move the bookmark if an explicit chapter was given.
@@ -145,7 +171,13 @@ def cmd_read(args) -> int:
     count = max(1, args.copy)
     end = min(position + count, total)
     served = chapters[position:end]
-    payload = "\n\n".join(chapter.text() for chapter in served)
+    payload = _payload_for_span(
+        chapters,
+        position,
+        end,
+        synopsis=synopsis,
+        include_synopsis=not args.no_synopsis,
+    )
 
     if args.stdout:
         print(payload)
@@ -173,6 +205,44 @@ def cmd_read(args) -> int:
     return 0
 
 
+def cmd_gui(args) -> int:
+    """Launch the local reading-room web app (reader-app/serve.py) in-process.
+
+    With a TARGET, deep-link straight to that novel at its current bookmark; the
+    web app shares data/reading_progress.json, so the two stay in sync.
+    """
+    reader_app = Path(__file__).resolve().parent / "reader-app"
+    if not (reader_app / "serve.py").exists():
+        print("reader-app is missing — cannot launch the GUI.", file=sys.stderr)
+        return 1
+    sys.path.insert(0, str(reader_app))
+    sys.path.insert(0, str(reader_app / "backend"))
+    try:
+        import serve
+        from ids import nid_encode
+    except ImportError as exc:
+        print(f"Could not load the reader app ({exc}).", file=sys.stderr)
+        print("Run reader-app/setup.py first to install its dependencies.", file=sys.stderr)
+        return 1
+
+    open_path = ""
+    if args.target:
+        resolved = _resolve_downloaded(args.target)
+        if resolved is None:
+            return 1
+        record, chapters, _ = resolved
+        position = min(progress.get_position(record.url), len(chapters) - 1)
+        open_path = f"?open={nid_encode(record.url)}&ch={position}"
+
+    return serve.serve(
+        args.host,
+        args.port,
+        open_browser_tab=not args.no_open,
+        rebuild=args.rebuild,
+        open_path=open_path,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="read.py",
@@ -197,6 +267,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Copy without moving the bookmark (peek ahead)",
     )
     parser.add_argument(
+        "--no-synopsis", action="store_true",
+        help="Do not prepend the synopsis when copying from chapter 1",
+    )
+    parser.add_argument(
         "--stdout", action="store_true",
         help="Print the chapters to the terminal instead of the clipboard",
     )
@@ -212,11 +286,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--progress", action="store_true",
         help="Show saved progress across all novels (ignores TARGET)",
     )
+
+    gui = parser.add_argument_group(
+        "reading-room GUI",
+        "Open the local web reader instead of copying to the clipboard. With a "
+        "TARGET, it jumps straight to that novel at its current bookmark.",
+    )
+    gui.add_argument(
+        "--gui", action="store_true",
+        help="Launch the reading-room web app (reader-app) in the browser",
+    )
+    gui.add_argument("--port", type=int, default=8000, help="GUI server port (default 8000)")
+    gui.add_argument("--host", default="127.0.0.1", help="GUI server host (default 127.0.0.1)")
+    gui.add_argument("--no-open", action="store_true", help="Don't open a browser tab")
+    gui.add_argument("--rebuild", action="store_true", help="Force a frontend rebuild")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.gui:
+        return cmd_gui(args)
     if args.progress:
         return _show_all_progress()
     if not args.target:

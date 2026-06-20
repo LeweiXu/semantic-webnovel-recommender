@@ -1,0 +1,6 @@
+# Reader-app backend extras. Install into the SAME venv as the main project
+# (e.g. ~/venvs/recsys) so the editable `webnovel`/`recsys`/`scraper` imports
+# resolve. jieba + curl-cffi + beautifulsoup4 already come from the main install.
+fastapi
+uvicorn[standard]
+pypinyin

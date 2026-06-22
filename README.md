@@ -1,26 +1,65 @@
-# Webnovel
+# Semantic Novel Recommender
 
-A small set of command-line scripts for discovering, recommending, downloading,
-and reading web novels. Everything runs locally and keeps its data on disk.
+A local, offline **semantic search & recommendation engine** for Chinese web
+novels, built around the **BAAI/bge-m3** embedding model. It turns each novel's
+**metadata** (synopsis + extracted tags) into a 1024-dimensional dense vector and
+retrieves by exact cosine similarity, a tag-overlap re-ranking boost, and metadata
+filters — with an optional local-LLM layer that parses natural-language queries,
+re-ranks, and explains results. Everything runs on-device: no API keys, no data
+leaves the machine.
 
-The project is intended to grow into a site-adapter-based scraper for multiple
-web-novel sites. The current implementation supports the novel categories on
-[52shuku](https://www.52shuku.net/):
+> Only **metadata** is embedded (never full novel bodies), so the index scales far
+> beyond what is downloaded locally — ~10k records today, designed for 100k+.
 
-```text
-gl  yanqing  bl  xiandaidushi  chongsheng
-jiakong  jiakonglishi  chuanyue  wuxia
+Around that core sits a complete pipeline: a polite metadata crawler, a resumable
+bulk downloader, coverage reports, and a local pinyin/dictionary **reading web
+app**. The current site adapter targets [52shuku](https://www.52shuku.net/); the
+design is meant to generalize behind a site-adapter interface.
+
+## Highlights
+
+- **Dense semantic retrieval** with BAAI/bge-m3 (1024-d, L2-normalized) via
+  `sentence-transformers`.
+- **Hybrid ranking** — cosine similarity + tag-overlap (Jaccard) boost + metadata
+  filters (status, category, length, year, author, required tags).
+- **LLM query understanding** (optional, local Qwen2.5-3B) — parse free text into
+  tags + filters, listwise re-rank, and one-line explanations; loaded lazily.
+- **Incremental index** — a per-record `sha1(embed_text())` means only new or
+  changed novels are re-embedded; a 10k-record corpus updates in a few forward
+  passes, not a full re-encode.
+- **Exact cosine, no ANN** — a single NumPy matrix–vector product is sub-millisecond
+  and exact at this scale; the embedding matrix *is* the index.
+- **Local FastAPI + React reading app** with offline pinyin ruby and a hover
+  dictionary, sharing the CLI's reading bookmark.
+
+Deep dive into the engine: **[`recsys/ARCHITECTURE.md`](recsys/ARCHITECTURE.md)**.
+
+## Quickstart — recommendations
+
+```bash
+# Describe what you want (free-text semantic query)
+python recommend.py query "破镜重圆，刑侦，ABO，前任重逢"
+
+# More like a novel you already know (reuses its stored vector — no model needed)
+python recommend.py like "Love U2"
+
+# Let the local LLM parse the query into tags + filters, then re-rank
+python recommend.py query "completed yuri detective novels" --parse --rerank
 ```
+
+Supported 52shuku categories: `gl yanqing bl xiandaidushi chongsheng jiakong
+jiakonglishi chuanyue wuxia`.
 
 ## Scripts
 
-Five standalone scripts live in the repository root. Each has a comprehensive
-`--help`:
+`recommend.py` is the centerpiece — semantic recommendations and embedding-index
+maintenance. The other repository-root scripts form the supporting pipeline that
+feeds and complements it. Each has a comprehensive `--help`:
 
 ```text
+recommend.py           Semantic recommendations + embedding-index maintenance  ★
 scrape_metadata.py     Crawl metadata and catalogue graphs for selected categories
-download.py  Download full novel text (whole categories, one title/URL, or repair)
-recommend.py           Semantic recommendations + embedding-index maintenance
+download.py            Download full novel text (whole categories, one title/URL, or repair)
 report.py              Catalogue coverage, disk usage, and incomplete-file reports
 read.py                Read a downloaded novel: track progress, copy chapters to the clipboard
 tts.py                 Turn English TXT/EPUB novels into MP3 audio with edge-tts
@@ -44,10 +83,12 @@ stay in sync.
 
 ## Features
 
+- Recommends novels by semantic similarity over local bge-m3 embeddings, with a
+  tag-overlap boost, metadata filters, and an optional local-LLM parse/rerank/
+  explain layer.
 - Crawls metadata across selected categories, following previous/next chains and
   recommendation links, and records confirmed 404 pages.
 - Produces both recommender metadata and resumable download catalogues.
-- Recommends novels using local semantic embeddings, tags, and filters.
 - Downloads a single title, a direct URL, selected categories, or everything.
 - Reads downloaded novels with a persistent per-novel bookmark and copies the
   next N chapters straight to the clipboard.

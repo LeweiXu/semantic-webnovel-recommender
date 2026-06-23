@@ -79,19 +79,21 @@ through the root scripts.
 
 ## Storage
 
-Each category owns its generated data:
+All downloaded categories live under a single `library/` folder; each category
+owns its generated data:
 
 ```text
-gl/
-├── metadata.jsonl
-├── _catalog.jsonl
-└── YYYY-MM/*.txt
+library/
+└── gl/
+    ├── metadata.jsonl
+    ├── _catalog.jsonl
+    └── YYYY-MM/*.txt
 ```
 
-The same layout applies to:
+The same layout applies to every category:
 
 ```text
-yanqing  bl  xiandaidushi  chongsheng
+gl  yanqing  bl  xiandaidushi  chongsheng
 jiakong  jiakonglishi  chuanyue  wuxia
 ```
 
@@ -99,7 +101,7 @@ jiakong  jiakonglishi  chuanyue  wuxia
 crawl graph and includes confirmed 404 records. Downloaded `.txt` files are
 organized by upload month.
 
-Generated category directories and `data/rec_index/` are git-ignored.
+The `library/` tree and `data/rec_index/` are git-ignored.
 
 ## Metadata Crawl
 

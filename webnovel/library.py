@@ -9,7 +9,7 @@ from curl_cffi import requests as cffi_requests
 
 from recsys.store import NovelRecord, load_all
 from scraper import CHAPTER_RE, fetch, parse_chapter_page, parse_landing, split_into_chapters
-from scripts.repo_paths import ROOT_DIR
+from scripts.repo_paths import LIBRARY_DIR
 
 
 @dataclass
@@ -170,7 +170,7 @@ def local_path(record: NovelRecord) -> Path | None:
     if not record.file:
         return None
     path = Path(record.file)
-    return path if path.is_absolute() else ROOT_DIR / path
+    return path if path.is_absolute() else LIBRARY_DIR / path
 
 
 def interactive_reader(record: NovelRecord, chapters: list[Chapter]) -> int:

@@ -202,13 +202,14 @@ python3 -m venv ~/venvs/recsys
 ### Storage layout
 
 ```text
-gl/                              # one self-contained folder per category
-├── metadata.jsonl               # one recommender record per URL (the embedding store)
-├── _catalog.jsonl               # resumable crawl/download graph
-└── YYYY-MM/title_author.txt      # downloaded full text (never embedded)
+library/                          # all downloaded categories (git-ignored)
+└── gl/                           # one self-contained folder per category
+    ├── metadata.jsonl            # one recommender record per URL (the embedding store)
+    ├── _catalog.jsonl            # resumable crawl/download graph
+    └── YYYY-MM/title_author.txt   # downloaded full text (never embedded)
 
-data/rec_index/                  # embeddings.npy + manifest.json (regenerable; git-ignored)
-data/reading_progress.json       # shared reading bookmark (git-ignored)
+data/rec_index/                   # embeddings.npy + manifest.json (regenerable; git-ignored)
+data/reading_progress.json        # shared reading bookmark (git-ignored)
 ```
 
 ### Development

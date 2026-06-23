@@ -23,6 +23,7 @@ from webnovel.library import list_library
 import annotate
 import dictionary
 import novels
+import recommend_api
 from download_api import download_events
 from ids import nid_decode, nid_encode
 from schemas import (
@@ -180,6 +181,44 @@ def set_progress(nid: str, body: ProgressIn) -> ProgressOut:
     progress.set_position(resolved.url, target, title=resolved.record.title, total=total)
     entry = progress.all_progress().get(resolved.url, {})
     return ProgressOut(ok=True, position=target, updated=entry.get("updated", ""))
+
+
+# ── Recommender (Discover page, bundled demo corpus) ─────────────────────────
+
+@app.get("/api/discover/map")
+def discover_map() -> JSONResponse:
+    if not recommend_api.available():
+        raise HTTPException(status_code=404, detail="Demo corpus not built")
+    return JSONResponse(recommend_api.map_points())
+
+
+@app.get("/api/discover/tags")
+def discover_tags(limit: int = Query(default=18, le=60)) -> JSONResponse:
+    if not recommend_api.available():
+        raise HTTPException(status_code=404, detail="Demo corpus not built")
+    return JSONResponse(recommend_api.top_tags(limit))
+
+
+@app.get("/api/recommend")
+def recommend(
+    q: str = Query(min_length=1),
+    n: int = Query(default=12, le=40),
+    category: str | None = Query(default=None),
+) -> JSONResponse:
+    if not recommend_api.available():
+        raise HTTPException(status_code=404, detail="Demo corpus not built")
+    return JSONResponse({"results": recommend_api.query(q, n=n, category=category)})
+
+
+@app.get("/api/similar/{nid}")
+def similar(
+    nid: str,
+    n: int = Query(default=12, le=40),
+    category: str | None = Query(default=None),
+) -> JSONResponse:
+    if not recommend_api.available():
+        raise HTTPException(status_code=404, detail="Demo corpus not built")
+    return JSONResponse(recommend_api.similar(nid, n=n, category=category))
 
 
 # ── Dictionary ───────────────────────────────────────────────────────────────

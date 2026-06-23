@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from scraper import CHAPTER_RE, category_of_url, source_url_from_file  # noqa: E402
-from repo_paths import CATEGORIES, ROOT_DIR, category_dir  # noqa: E402
+from repo_paths import CATEGORIES, LIBRARY_DIR, category_dir  # noqa: E402
 
 from recsys import tags as tagmod  # noqa: E402
 from recsys.store import (  # noqa: E402
@@ -107,7 +107,7 @@ def parse_txt(path: Path, url: str) -> NovelRecord | None:
     excerpt = "\n".join(excerpt_lines)[:EXCERPT_MAX_CHARS]
 
     try:
-        rel = str(path.resolve().relative_to(ROOT_DIR))
+        rel = str(path.resolve().relative_to(LIBRARY_DIR))
     except ValueError:
         rel = str(path)
 

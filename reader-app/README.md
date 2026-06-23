@@ -1,12 +1,15 @@
 # Reading Room
 
-A local, offline reading app for the downloaded Chinese novels in this
-repository. It renders novels continuously with **pinyin ruby** over each
-character and **hover dictionary definitions**, remembers your place
-automatically, and shares that bookmark with the `read.py` CLI.
+A local, offline reading app for the Chinese novels in this repository. It opens
+on a **Discover** page that showcases the semantic recommender — free-text
+similarity search, "more like this", and an interactive 2-D embedding **map** —
+and reads novels continuously with **pinyin ruby** over each character and
+**hover dictionary definitions**, remembering your place and sharing that
+bookmark with the `read.py` CLI.
 
 Everything runs locally. Pinyin (pypinyin), word segmentation (jieba), and the
-CC-CEDICT dictionary are all on-disk — no text is sent anywhere.
+CC-CEDICT dictionary are all on-disk — no text is sent anywhere. The Discover
+page is powered by a small bundled demo corpus (see **Demo corpus** below).
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -47,6 +50,11 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
 
 ## Using it
 
+- **Discover (the home page, or press `D`)** — semantic search over the bundled
+  corpus: type a description in any language, tap a tag, or click a point on the
+  embedding **map** to explore by similarity. Each result shows a cosine-similarity
+  bar, tags, and a "✦ Similar" ("more like this") action. Powered by the repo's
+  bge-m3 recommender (`recsys`).
 - **Library (left, or press `L`)** — your currently-reading novels with progress,
   a search box over local metadata, and a field that accepts a pasted
   `52shuku.net` novel URL to download a new title on demand (live progress).
@@ -75,6 +83,27 @@ Fine-grained scroll position within a chapter is kept in the browser only.
   theme (no UI framework).
 - `data/cedict_ts.u8` — vendored CC-CEDICT (CC BY-SA 4.0; see
   `data/ATTRIBUTION.md`).
+- `demo/` — the bundled demo corpus the Discover page serves (see below).
+
+## Demo corpus
+
+The Discover page is served from a small, committed corpus in `demo/` so it works
+without the full (git-ignored) `library/` or a GPU:
+
+```text
+demo/metadata.jsonl              # ~500 gl + yanqing records (no opening excerpt)
+demo/rec_index/embeddings.npy    # precomputed bge-m3 vectors, row-aligned
+demo/rec_index/manifest.json     # model, urls, hashes + 2-D PCA coords for the map
+```
+
+`backend/recommend_api.py` loads it into a `recsys.SearchEngine`. **"Similar" and
+the map need no model** (precomputed vectors); a **free-text query lazily loads
+bge-m3** to embed the query, so the first search takes a few seconds. Rebuild the
+corpus from your local `library/` with:
+
+```bash
+~/venvs/recsys/bin/python reader-app/build_demo.py --per-cat 250
+```
 
 ## Development
 

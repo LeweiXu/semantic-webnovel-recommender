@@ -5,6 +5,7 @@ import { LibraryPanel } from "./components/LibraryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TocPanel } from "./components/TocPanel";
 import { ScrollReader } from "./components/ScrollReader";
+import { DiscoverPage } from "./components/DiscoverPage";
 
 export default function App() {
   const settings = useSettings();
@@ -12,6 +13,8 @@ export default function App() {
   const loading = useReader((s) => s.loading);
   const error = useReader((s) => s.error);
   const furthest = useReader((s) => s.furthest);
+  const view = useReader((s) => s.view);
+  const setView = useReader((s) => s.setView);
   const leftOpen = useReader((s) => s.leftOpen);
   const rightOpen = useReader((s) => s.rightOpen);
   const tocOpen = useReader((s) => s.tocOpen);
@@ -46,11 +49,13 @@ export default function App() {
         toggleRight();
       } else if (!typing && (e.key === "c" || e.key === "C")) {
         toggleToc();
+      } else if (!typing && (e.key === "d" || e.key === "D")) {
+        setView("discover");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleLeft, toggleRight, toggleToc]);
+  }, [toggleLeft, toggleRight, toggleToc, setView]);
 
   const total = novel?.total ?? 0;
   const spinePct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
@@ -64,10 +69,17 @@ export default function App() {
 
       <header className="topbar">
         <div className="topbar-side">
+          <button
+            className={`icon-btn${view === "discover" ? " is-active" : ""}`}
+            onClick={() => setView("discover")}
+            aria-label="Discover (D)"
+          >
+            <CompassIcon />
+          </button>
           <button className="icon-btn" onClick={() => toggleLeft()} aria-label="Library (L)">
             <span className="seal-glyph small" aria-hidden>读</span>
           </button>
-          {novel && (
+          {novel && view === "read" && (
             <button
               className="icon-btn"
               onClick={() => toggleToc()}
@@ -78,7 +90,7 @@ export default function App() {
           )}
         </div>
         <div className="topbar-center">
-          {novel && (
+          {novel && view === "read" && (
             <>
               <span className="topbar-title">{novel.title}</span>
               {total > 0 && (
@@ -97,22 +109,17 @@ export default function App() {
       </header>
 
       <main className="stage">
-        {loading && <div className="stage-note">Opening…</div>}
-        {error && !loading && <div className="stage-note">{error}</div>}
-        {!novel && !loading && !error && (
-          <div className="welcome">
-            <span className="seal-glyph xl" aria-hidden>读</span>
-            <h1 className="welcome-title">A quiet room for reading</h1>
-            <p className="welcome-sub">
-              Open the library to pick up where you left off, or paste a 52shuku
-              link to add something new.
-            </p>
-            <button className="btn-seal" onClick={() => toggleLeft(true)}>
-              Open library
-            </button>
-          </div>
+        {view === "discover" ? (
+          <DiscoverPage />
+        ) : loading ? (
+          <div className="stage-note">Opening…</div>
+        ) : error ? (
+          <div className="stage-note">{error}</div>
+        ) : novel ? (
+          <ScrollReader key={novel.nid} />
+        ) : (
+          <DiscoverPage />
         )}
-        {novel && !loading && <ScrollReader key={novel.nid} />}
       </main>
 
       {/* Left drawer — library */}
@@ -133,6 +140,22 @@ export default function App() {
         <SettingsPanel />
       </aside>
     </div>
+  );
+}
+
+function CompassIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M15.5 8.5l-2 5-5 2 2-5 5-2Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+        fill="currentColor"
+        fillOpacity="0.15"
+      />
+    </svg>
   );
 }
 

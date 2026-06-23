@@ -7,17 +7,9 @@ logs/
 *.egg-info/
 .vscode/
 
-# Per-category novel folders at the repo root (downloaded .txt + metadata.jsonl +
-# _catalog.jsonl). Anchored so only the top-level data folders are ignored.
-/gl/
-/yanqing/
-/bl/
-/xiandaidushi/
-/chongsheng/
-/jiakong/
-/jiakonglishi/
-/chuanyue/
-/wuxia/
+# All downloaded categories live under library/ (downloaded .txt +
+# metadata.jsonl + _catalog.jsonl per category). The whole tree is local data.
+/library/
 
 # Embedding index - regenerable via `python recommend.py update`.
 data/rec_index/

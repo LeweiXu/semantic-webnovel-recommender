@@ -12,10 +12,14 @@ interface ReaderState {
   current: number; // chapter under the reading line right now (drives the TOC)
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
 
+  // "discover" = the recommender landing page; "read" = the open novel.
+  view: "discover" | "read";
+
   leftOpen: boolean;
   rightOpen: boolean;
   tocOpen: boolean;
 
+  setView: (v: "discover" | "read") => void;
   openNovel: (nid: string, startAt?: number) => Promise<void>;
   loadChapter: (idx: number, annotate: boolean) => Promise<ChapterContent | null>;
   setFurthest: (idx: number) => void;
@@ -37,9 +41,12 @@ export const useReader = create<ReaderState>((set, get) => ({
   furthest: 0,
   current: 0,
   jumpTarget: null,
+  view: "discover",
   leftOpen: false,
   rightOpen: false,
   tocOpen: false,
+
+  setView: (v) => set({ view: v }),
 
   openNovel: async (nid, startAt) => {
     set({ loading: true, error: null, chapters: {}, novel: null, jumpTarget: null });
@@ -52,6 +59,7 @@ export const useReader = create<ReaderState>((set, get) => ({
         furthest: start,
         current: start,
         loading: false,
+        view: "read",
         leftOpen: false,
         tocOpen: false,
       });

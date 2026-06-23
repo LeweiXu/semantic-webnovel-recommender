@@ -24,9 +24,11 @@ from curl_cffi import requests as cffi_requests
 
 REPO_ROOT = Path(__file__).resolve().parent
 DATA_DIR = REPO_ROOT / "data"
-# Each category lives in its own folder at the repo root (gl/ is the former
-# output/). OUTPUT_DIR keeps its name as the default for the GL-only scrapers.
-OUTPUT_DIR = REPO_ROOT / "gl"
+# All downloaded categories live under library/; each category is a subfolder
+# (library/gl/, library/yanqing/, …). OUTPUT_DIR (library/gl/) keeps its name as
+# the default for the GL-only scrapers.
+LIBRARY_DIR = REPO_ROOT / "library"
+OUTPUT_DIR = LIBRARY_DIR / "gl"
 LOG_DIR = REPO_ROOT / "logs"
 FAILED_LOG = LOG_DIR / "failed.log"
 INCOMPLETE_LOG = LOG_DIR / "incomplete.log"
@@ -254,12 +256,12 @@ def category_of_url(url: str) -> str | None:
 
 
 def category_dir_for_url(url: str) -> Path:
-    """The repo-root folder a novel from this URL belongs in (gl/, yanqing/, …).
+    """The library subfolder a novel from this URL belongs in (library/gl/, …).
 
-    Falls back to OUTPUT_DIR (gl/) when the URL has no category segment.
+    Falls back to OUTPUT_DIR (library/gl/) when the URL has no category segment.
     """
     cat = category_of_url(url)
-    return REPO_ROOT / cat if cat else OUTPUT_DIR
+    return LIBRARY_DIR / cat if cat else OUTPUT_DIR
 
 
 def is_novel_landing_url(

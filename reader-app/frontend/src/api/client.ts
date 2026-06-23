@@ -54,6 +54,46 @@ export interface ChapterContent {
   next: number | null;
 }
 
+export interface RecItem {
+  nid: string;
+  url: string;
+  title: string;
+  author: string;
+  category: string;
+  status: string;
+  tags: string[];
+  synopsis: string;
+  cosine: number;
+  similarity: number; // 0–100, for the score bar
+  downloaded: boolean;
+}
+
+export interface SimilarOut {
+  seed: { nid: string; title: string; category: string } | null;
+  results: RecItem[];
+}
+
+export interface MapPoint {
+  nid: string;
+  x: number; // PCA axis 1, scaled to [-1, 1]
+  y: number; // PCA axis 2, scaled to [-1, 1]
+  category: string;
+  title: string;
+  tags: string[];
+  downloaded: boolean;
+}
+
+export interface MapData {
+  points: MapPoint[];
+  categories: string[];
+  count: number;
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
 export interface DefineEntry {
   pinyin: string;
   defs: string[];
@@ -88,6 +128,17 @@ export const api = {
     ),
   define: (word: string) =>
     getJSON<DefineOut>(`/api/define?word=${encodeURIComponent(word)}`),
+  recommend: (q: string, n = 12, category?: string) =>
+    getJSON<{ results: RecItem[] }>(
+      `/api/recommend?q=${encodeURIComponent(q)}&n=${n}` +
+        (category ? `&category=${category}` : ""),
+    ),
+  similar: (nid: string, n = 12, category?: string) =>
+    getJSON<SimilarOut>(
+      `/api/similar/${nid}?n=${n}` + (category ? `&category=${category}` : ""),
+    ),
+  discoverMap: () => getJSON<MapData>(`/api/discover/map`),
+  discoverTags: (limit = 18) => getJSON<TagCount[]>(`/api/discover/tags?limit=${limit}`),
   setProgress: async (nid: string, position: number) => {
     const res = await fetch(`/api/novel/${nid}/progress`, {
       method: "POST",

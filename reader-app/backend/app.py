@@ -207,7 +207,18 @@ def recommend(
 ) -> JSONResponse:
     if not recommend_api.available():
         raise HTTPException(status_code=404, detail="Demo corpus not built")
-    return JSONResponse({"results": recommend_api.query(q, n=n, category=category)})
+    try:
+        results = recommend_api.query(q, n=n, category=category)
+    except Exception:
+        # Free-text query needs bge-m3 (torch + sentence-transformers + a first-run
+        # model download). The model-free features stay usable, so degrade softly.
+        return JSONResponse({
+            "results": [],
+            "error": "Free-text search needs the bge-m3 model (install the full "
+                     "requirements; the first query also downloads the model). "
+                     "Meanwhile, click a point on the map or a result's “Similar”.",
+        })
+    return JSONResponse({"results": results})
 
 
 @app.get("/api/similar/{nid}")

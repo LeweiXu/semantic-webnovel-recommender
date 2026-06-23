@@ -19,7 +19,7 @@ import download
 import read
 import report
 import scrape_metadata
-import tts
+import scripts.tts as tts
 
 
 class NavigationTests(unittest.TestCase):

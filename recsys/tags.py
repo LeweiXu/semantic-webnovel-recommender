@@ -35,7 +35,7 @@ _STOP_RE = re.compile(r"开始阅读|阅读记录|^第\d+页第\d+页|^Tips|^上
 # Tag/topic token separators: whitespace (incl. NBSP), Chinese/ASCII punctuation.
 _TAG_SPLIT_RE = re.compile(r"[\s　\xa0、，,/／┃|；;]+")
 
-# Bracketed genre markers inside a title, e.g. "Love U2[刑侦]" → 刑侦.
+# Bracketed genre markers inside a title, e.g. "诡秘之主[刑侦]" → 刑侦.
 _BRACKET_RE = re.compile(r"[\[【［]([^\]】］]{1,8})[\]】］]")
 
 # Lines that are pure header boilerplate / dividers, dropped from the prose.

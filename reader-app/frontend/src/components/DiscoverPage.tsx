@@ -8,6 +8,7 @@ import {
 } from "../api/client";
 import { useReader } from "../store/reader";
 import { SemanticMap } from "./SemanticMap";
+import { RecCard } from "./RecCard";
 
 type Action =
   | { kind: "idle" }
@@ -49,7 +50,15 @@ export function DiscoverPage() {
     const slowTimer = window.setTimeout(() => setSlow(true), 1200);
     api
       .recommend(q, 14, cat ?? undefined)
-      .then((r) => setResults(r.results))
+      .then((r) => {
+        if (r.error) {
+          setResults([]);
+          setError(r.error);
+        } else {
+          setError(null);
+          setResults(r.results);
+        }
+      })
       .catch(() => setError("Search failed. Is the demo corpus built?"))
       .finally(() => {
         window.clearTimeout(slowTimer);
@@ -95,8 +104,9 @@ export function DiscoverPage() {
         <span className="seal-glyph small" aria-hidden>觅</span>
         <h1 className="dsc-title">Discover</h1>
         <p className="dsc-sub">
-          Semantic search over {map?.count ?? "—"} novels — describe a story in
-          any words, or explore the embedding map below.
+          A demo over {map?.count ?? 500} novels (250 百合 gl + 250 言情 yanqing)
+          with precomputed bge-m3 embeddings; the full index scales to 100k+.
+          Describe a story in any words, or explore the embedding map below.
         </p>
 
         <form
@@ -163,7 +173,7 @@ export function DiscoverPage() {
           {heading && <div className="dsc-results-head">{heading}</div>}
           {loading && (
             <div className="dsc-note">
-              Searching…{slow && " (first query loads the bge-m3 model — a few seconds)"}
+              Searching…{slow && " (first query loads the bge-m3 model, a few seconds)"}
             </div>
           )}
           {error && !loading && <div className="dsc-note">{error}</div>}
@@ -176,48 +186,13 @@ export function DiscoverPage() {
           {!loading && !error && results.length > 0 && (
             <ul className="rec-list">
               {results.map((r, i) => (
-                <li
+                <RecCard
                   key={r.nid}
-                  className="rec-card"
-                  style={{ animationDelay: `${Math.min(i, 12) * 35}ms` }}
-                >
-                  <div className="rec-head">
-                    <span className="rec-title">{r.title}</span>
-                    <span className={`rec-cat cat-${r.category}`}>{catLabel(r.category)}</span>
-                  </div>
-                  <div className="rec-meta">
-                    {r.author || "—"}
-                    {r.status ? ` · ${r.status}` : ""}
-                  </div>
-                  <div className="rec-bar" style={{ ["--w" as any]: `${r.similarity}%` }}>
-                    <span />
-                    <em>{r.similarity}%</em>
-                  </div>
-                  {r.synopsis && <p className="rec-syn">{r.synopsis}</p>}
-                  {r.tags.length > 0 && (
-                    <div className="rec-tags">
-                      {r.tags.map((t) => (
-                        <button key={t} className="rec-tag" onClick={() => { setInput(t); runQuery(t); }}>
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div className="rec-actions">
-                    <button className="rec-btn" onClick={() => explore(r.nid, r.title)}>
-                      ✦ Similar
-                    </button>
-                    {r.downloaded ? (
-                      <button className="rec-btn primary" onClick={() => openNovel(r.nid)}>
-                        Read
-                      </button>
-                    ) : (
-                      <a className="rec-btn ghost" href={r.url} target="_blank" rel="noreferrer">
-                        52shuku ↗
-                      </a>
-                    )}
-                  </div>
-                </li>
+                  rec={r}
+                  delay={Math.min(i, 12) * 35}
+                  onSimilar={(nid, title) => explore(nid, title)}
+                  onTag={(t) => { setInput(t); runQuery(t); }}
+                />
               ))}
             </ul>
           )}
@@ -231,8 +206,8 @@ export function DiscoverPage() {
             <div className="dsc-note">Loading map…</div>
           )}
           <p className="dsc-map-caption">
-            Each point is a novel, placed by a 2-D PCA of its bge-m3 embedding —
-            closer points are more semantically alike. Click one to explore its
+            Each point is a novel, placed by a 2-D PCA of its bge-m3 embedding.
+            Closer points are more semantically alike; click one to explore its
             neighbourhood.
           </p>
         </section>

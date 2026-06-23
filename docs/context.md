@@ -183,8 +183,8 @@ Network-free checks:
   scraper.py recsys/*.py webnovel/*.py scripts/*.py *.py
 ```
 
-The `Love U2` recommendation regression is:
+The `诡秘之主` recommendation regression is:
 
 ```bash
-python recommend.py like "Love U2" -n 3
+python recommend.py like "诡秘之主" -n 3
 ```

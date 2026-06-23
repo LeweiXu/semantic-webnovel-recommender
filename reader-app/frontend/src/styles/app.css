@@ -1088,6 +1088,20 @@ input[type="range"]::-moz-range-thumb {
 .rec-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .rec-btn.primary:hover { filter: brightness(1.05); color: var(--accent-ink); }
 .rec-btn.ghost { color: var(--muted); }
+.rec-dl {
+  margin-top: 10px;
+  font-size: 0.72rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink-soft);
+  background: var(--bg);
+  border-radius: 7px;
+  padding: 7px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rec-dl.is-error { color: var(--accent); }
+.rec-dl.is-done { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
 
 /* Semantic map */
 .dsc-map-panel {

@@ -21,6 +21,13 @@ accelerate
 # Numerics
 numpy
 
+# Reader / Discover web app (FastAPI backend + offline pinyin for the reading UI).
+# The map and "more like this" work with just these; free-text semantic search
+# also needs torch + sentence-transformers above (plus a first-run bge-m3 download).
+fastapi
+uvicorn[standard]
+pypinyin
+
 # Reserved for the optional lexical/BM25 hybrid signal (not required by the
 # current embedding+tags pipeline)
 jieba

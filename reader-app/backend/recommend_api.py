@@ -68,7 +68,7 @@ def _get_embedder():
     with _embedder_lock:
         if _embedder is None:
             from recsys.embed import Embedder
-            _embedder = Embedder()  # lazily pulls in bge-m3 (heavy) — query only
+            _embedder = Embedder()  # lazily pulls in bge-m3 (heavy); query only
         return _embedder
 
 

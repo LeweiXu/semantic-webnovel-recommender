@@ -17,7 +17,7 @@ Subcommands (each has its own --help):
 
 Examples:
   python recommend.py update
-  python recommend.py like "Love U2" -n 15
+  python recommend.py like "诡秘之主" -n 15
   python recommend.py query "破镜重圆，刑侦，ABO，前任重逢" --category bl
   python recommend.py tags 破镜重圆 ABO
 """

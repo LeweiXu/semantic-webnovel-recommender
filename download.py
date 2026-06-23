@@ -19,7 +19,7 @@ Examples:
   python download.py categories yanqing bl --forward --limit 100
 
   # One novel by title (disambiguated interactively) or by URL
-  python download.py novel "Love U2"
+  python download.py novel "诡秘之主"
   python download.py novel https://www.52shuku.net/gl/180.html
 
   # Repair incomplete gl downloads

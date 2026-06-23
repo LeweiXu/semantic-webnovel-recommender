@@ -11,31 +11,31 @@ you copy, so re-running the command keeps handing you the next chapters.
 
 Examples:
   # Copy the synopsis + next chapter to the clipboard and advance the bookmark
-  python read.py "Love U2" --copy
+  python read.py "诡秘之主" --copy
 
   # Copy the synopsis + next 3 chapters and advance, if starting at chapter 1
-  python read.py "Love U2" --copy 3
+  python read.py "诡秘之主" --copy 3
 
   # Jump to chapter 12, then copy 5 chapters from there
-  python read.py "Love U2" --chapter 12 --copy 5
+  python read.py "诡秘之主" --chapter 12 --copy 5
 
   # Peek at the next 2 chapters WITHOUT moving the bookmark
-  python read.py "Love U2" --copy 2 --no-advance
+  python read.py "诡秘之主" --copy 2 --no-advance
 
   # Where am I? / list chapters / reset to the start
-  python read.py "Love U2"
-  python read.py "Love U2" --list
-  python read.py "Love U2" --reset
+  python read.py "诡秘之主"
+  python read.py "诡秘之主" --list
+  python read.py "诡秘之主" --reset
 
   # Print the next chapter to the terminal instead of the clipboard
-  python read.py "Love U2" --copy --stdout
+  python read.py "诡秘之主" --copy --stdout
 
   # Show saved progress across all novels
   python read.py --progress
 
   # Open the reading-room web app (optionally jumping to a novel's bookmark)
   python read.py --gui
-  python read.py "Love U2" --gui
+  python read.py "诡秘之主" --gui
 """
 from __future__ import annotations
 

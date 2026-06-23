@@ -16,3 +16,6 @@ data/rec_index/
 
 # Personal reading bookmarks (read.py).
 data/reading_progress.json
+
+library/
+reports/

@@ -5,7 +5,7 @@ Selects a small, display-rich slice of gl + yanqing novels, attaches their
 BAAI/bge-m3 vectors (reusing the main index for gl; embedding a fresh slice for
 yanqing), computes a 2-D PCA projection for the "semantic map", and writes a
 self-contained mini-index under reader-app/demo/. This lets the Discover page
-showcase the recommender — similarity search, "more like this", and the map —
+showcase the recommender (similarity search, "more like this", and the map)
 without the full (git-ignored) corpus.
 
 Run with the project venv:
@@ -49,7 +49,7 @@ def main() -> int:
 
     index = load_index()
     if index is None:
-        raise SystemExit("No main index found — run `python recommend.py build` first.")
+        raise SystemExit("No main index found: run `python recommend.py build` first.")
     row_of = index.row_of()
 
     # gl: reuse vectors already in the main index (no model needed).
@@ -95,7 +95,7 @@ def main() -> int:
     )
 
     # metadata.jsonl, ordered to match the index rows. Drop the opening excerpt
-    # (large, unused for display — vectors are already computed) to keep it light.
+    # (large, unused for display; vectors are already computed) to keep it light.
     with (OUT / "metadata.jsonl").open("w", encoding="utf-8") as f:
         for r in records:
             r.excerpt = ""

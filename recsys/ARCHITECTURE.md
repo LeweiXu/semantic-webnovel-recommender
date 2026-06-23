@@ -1,4 +1,4 @@
-# Architecture — the semantic recommender (`recsys/`)
+# Architecture: the semantic recommender (`recsys/`)
 
 A local, offline semantic search + recommendation engine over web-novel
 **metadata**. Each novel is reduced to a short text record (title, tags,
@@ -7,7 +7,7 @@ exact cosine similarity with a tag-overlap boost and metadata filters. An
 optional local LLM adds natural-language query parsing, re-ranking, and
 explanations. Nothing leaves the machine and no service is required.
 
-> Only metadata is embedded — never full novel bodies — so the index scales far
+> Only metadata is embedded (never full novel bodies), so the index scales far
 > beyond what is downloaded locally (≈10k records today, designed for 100k+).
 
 ## Pipeline
@@ -39,13 +39,13 @@ ranked recommendations  →  recommend.py {like, query, tags, repl}  recsys/cli.
 
 | File | Role |
 | --- | --- |
-| `embed.py` | `Embedder` — sentence-transformers wrapper (bge-m3); `encode_docs`, `encode_query`. torch/ST imported lazily inside `__init__`. |
+| `embed.py` | `Embedder`: sentence-transformers wrapper (bge-m3); `encode_docs`, `encode_query`. torch/ST imported lazily inside `__init__`. |
 | `store.py` | `NovelRecord` dataclass + per-category `metadata.jsonl` load/upsert; `embed_text()` defines the embedding input. |
-| `index.py` | `Index` dataclass + `build()` — incremental embedding (reuses vectors whose `(url, content_hash)` are unchanged); atomic write of `embeddings.npy` + `manifest.json`. |
-| `search.py` | `SearchEngine` — exact cosine + tag-overlap (Jaccard) boost + metadata filters; `load`, `search`, `vector_for_url`. |
+| `index.py` | `Index` dataclass + `build()`: incremental embedding (reuses vectors whose `(url, content_hash)` are unchanged); atomic write of `embeddings.npy` + `manifest.json`. |
+| `search.py` | `SearchEngine`: exact cosine + tag-overlap (Jaccard) boost + metadata filters; `load`, `search`, `vector_for_url`. |
 | `tags.py` | Regex extraction of structured tags / synopsis / filters from raw page text. |
-| `extract.py` | `sync()` — parse downloaded `<category>/*.txt` into `NovelRecord`s. |
-| `llm.py` | `LocalLLM` (Qwen2.5-3B) — `parse_query`, `rerank`, `explain`; loaded only on demand. |
+| `extract.py` | `sync()`: parse downloaded `<category>/*.txt` into `NovelRecord`s. |
+| `llm.py` | `LocalLLM` (Qwen2.5-3B): `parse_query`, `rerank`, `explain`; loaded only on demand. |
 | `catalog.py` | Crawl/download ledger records (`_catalog.jsonl`). |
 | `crawl.py` | Metadata-only crawler (landing pages + prev/next + recommendation links). |
 | `cli.py` | Full CLI (`sync`, `build`, `update`, `like`, `query`, `tags`, `download`, `repl`); `Context` lazily holds engine/embedder/LLM. |
@@ -74,9 +74,9 @@ author exclusion, required tags) are applied before truncating to the top-n.
 Loaded only when a flag requests it, and every method degrades gracefully
 (returns the input unchanged on error):
 
-- `--parse` — decode a free-text query into `(semantic_text, tags, filters)`.
-- `--rerank` — listwise re-ranking of the top candidates by reading synopses.
-- `--explain` — a one-line reason per recommendation.
+- `--parse`: decode a free-text query into `(semantic_text, tags, filters)`.
+- `--rerank`: listwise re-ranking of the top candidates by reading synopses.
+- `--explain`: a one-line reason per recommendation.
 
 Plain `like` / `query` / `tags` never touch the LLM.
 

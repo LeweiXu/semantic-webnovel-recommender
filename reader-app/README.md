@@ -1,14 +1,14 @@
 # Reading Room
 
 A local, offline reading app for the Chinese novels in this repository. It opens
-on a **Discover** page that showcases the semantic recommender — free-text
-similarity search, "more like this", and an interactive 2-D embedding **map** —
+on a **Discover** page that showcases the semantic recommender (free-text
+similarity search, "more like this", and an interactive 2-D embedding **map**),
 and reads novels continuously with **pinyin ruby** over each character and
 **hover dictionary definitions**, remembering your place and sharing that
 bookmark with the `read.py` CLI.
 
 Everything runs locally. Pinyin (pypinyin), word segmentation (jieba), and the
-CC-CEDICT dictionary are all on-disk — no text is sent anywhere. The Discover
+CC-CEDICT dictionary are all on-disk: no text is sent anywhere. The Discover
 page is powered by a small bundled demo corpus (see **Demo corpus** below).
 
 ```
@@ -50,21 +50,21 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
 
 ## Using it
 
-- **Discover (the home page, or press `D`)** — semantic search over the bundled
+- **Discover (the home page, or press `D`)**: semantic search over the bundled
   corpus: type a description in any language, tap a tag, or click a point on the
   embedding **map** to explore by similarity. Each result shows a cosine-similarity
   bar, tags, and a "✦ Similar" ("more like this") action. Powered by the repo's
   bge-m3 recommender (`recsys`).
-- **Library (left, or press `L`)** — your currently-reading novels with progress,
+- **Library (left, or press `L`)**: your currently-reading novels with progress,
   a search box over local metadata, and a field that accepts a pasted
   `52shuku.net` novel URL to download a new title on demand (live progress).
-- **Settings (right, or press `S`)** — pinyin on/off, theme (paper / sepia /
+- **Settings (right, or press `S`)**: pinyin on/off, theme (paper / sepia /
   night), text size, line spacing, column width, and reading mode. Scroll mode
   is active; paginate is planned.
-- **Reading** — scroll continuously; chapters load as you reach them. Click any
+- **Reading**: scroll continuously; chapters load as you reach them. Click any
   word for its pinyin and definition. Your position saves automatically.
 - A novel must be **downloaded** to read it. Use the library search/paste-link,
-  or the CLI: `python download_catalogue.py novel "<title or URL>"`.
+  or the CLI: `python download.py novel "<title or URL>"`.
 
 ## How progress is shared
 
@@ -76,14 +76,14 @@ Fine-grained scroll position within a chapter is kept in the browser only.
 
 ## Architecture
 
-- `backend/` — FastAPI app reusing the repo's `webnovel`/`recsys`/`scraper`
+- `backend/`: FastAPI app reusing the repo's `webnovel`/`recsys`/`scraper`
   packages for chapters, library, progress, and downloads, plus offline
   annotation (`annotate.py`) and dictionary (`dictionary.py`).
-- `frontend/` — Vite + React + TypeScript; Zustand for state; hand-rolled CSS
+- `frontend/`: Vite + React + TypeScript; Zustand for state; hand-rolled CSS
   theme (no UI framework).
-- `data/cedict_ts.u8` — vendored CC-CEDICT (CC BY-SA 4.0; see
+- `data/cedict_ts.u8`: vendored CC-CEDICT (CC BY-SA 4.0; see
   `data/ATTRIBUTION.md`).
-- `demo/` — the bundled demo corpus the Discover page serves (see below).
+- `demo/`: the bundled demo corpus the Discover page serves (see below).
 
 ## Demo corpus
 
@@ -110,8 +110,8 @@ corpus from your local `library/` with:
 Two processes with hot reload:
 
 ```bash
-# Terminal 1 — API
+# Terminal 1: API
 cd reader-app/backend && ~/venvs/recsys/bin/uvicorn app:app --reload --port 8000
-# Terminal 2 — UI (proxies /api to :8000)
+# Terminal 2: UI (proxies /api to :8000)
 cd reader-app/frontend && npm run dev    # http://localhost:5173
 ```

@@ -26,10 +26,15 @@ def ensure_build(rebuild: bool) -> None:
         return
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
     if shutil.which(npm) is None:
-        print("npm not found — run reader-app/setup.py first.", file=sys.stderr)
+        print("npm not found: install Node.js (https://nodejs.org), then re-run.",
+              file=sys.stderr)
         raise SystemExit(1)
+    frontend = HERE / "frontend"
+    if not (frontend / "node_modules").exists():
+        print("Installing frontend dependencies (npm install)…")
+        subprocess.run([npm, "install"], cwd=frontend, check=True)
     print("Building the frontend…")
-    subprocess.run([npm, "run", "build"], cwd=HERE / "frontend", check=True)
+    subprocess.run([npm, "run", "build"], cwd=frontend, check=True)
 
 
 def open_browser(url: str) -> None:
@@ -54,7 +59,7 @@ def serve(
 
     ``open_path`` is appended after the trailing slash, so callers can deep-link
     to a novel (e.g. ``"?open=<nid>&ch=<index>"``). Importable so other entry
-    points — like ``read.py --gui`` — can launch the reading room in-process.
+    points (like ``read.py --gui``) can launch the reading room in-process.
     """
     ensure_build(rebuild)
 
@@ -62,7 +67,7 @@ def serve(
     try:
         import uvicorn
     except ImportError:
-        print("uvicorn is not installed — run reader-app/setup.py first.", file=sys.stderr)
+        print("uvicorn is not installed: run reader-app/setup.py first.", file=sys.stderr)
         return 1
 
     sys.path.insert(0, str(HERE / "backend"))

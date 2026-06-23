@@ -129,7 +129,7 @@ export const api = {
   define: (word: string) =>
     getJSON<DefineOut>(`/api/define?word=${encodeURIComponent(word)}`),
   recommend: (q: string, n = 12, category?: string) =>
-    getJSON<{ results: RecItem[] }>(
+    getJSON<{ results: RecItem[]; error?: string }>(
       `/api/recommend?q=${encodeURIComponent(q)}&n=${n}` +
         (category ? `&category=${category}` : ""),
     ),

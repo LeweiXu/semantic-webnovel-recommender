@@ -34,6 +34,11 @@ from scripts.repo_paths import CATEGORIES, category_dir
 
 log = logging.getLogger("webnovel.download")
 
+# Serialises store/catalog writes so the dual-route (--windscribe) download's two
+# threads don't interleave their read-modify-write on the same category files.
+# Only the quick registration is held here; the slow network fetch stays outside.
+_STORE_LOCK = threading.Lock()
+
 
 @dataclass
 class DownloadStats:
@@ -70,21 +75,22 @@ def _register_download(url: str, novel) -> tuple[int, int]:
     category = category_of_url(url) or "gl"
     record = parse_txt(novel.file_path, url)
     added = updated = 0
-    if record is not None:
-        added, updated = upsert_category(category, [record])
+    with _STORE_LOCK:
+        if record is not None:
+            added, updated = upsert_category(category, [record])
 
-    catalog = load_catalog(category)
-    prior = catalog.get(url)
-    catalog[url] = CatalogRecord(
-        url=url,
-        category=category,
-        fetch_status="ok",
-        prev_url=novel.meta.prev_url,
-        next_url=novel.meta.next_url,
-        rec_urls=list(prior.rec_urls) if prior else [],
-        has_meta=record is not None,
-    )
-    write_catalog(category, catalog)
+        catalog = load_catalog(category)
+        prior = catalog.get(url)
+        catalog[url] = CatalogRecord(
+            url=url,
+            category=category,
+            fetch_status="ok",
+            prev_url=novel.meta.prev_url,
+            next_url=novel.meta.next_url,
+            rec_urls=list(prior.rec_urls) if prior else [],
+            has_meta=record is not None,
+        )
+        write_catalog(category, catalog)
     return added, updated
 
 
@@ -200,9 +206,10 @@ def _process_queue(
                     )
             except FileNotFoundError:
                 category = category_of_url(url) or "gl"
-                catalog = load_catalog(category)
-                catalog[url] = CatalogRecord(url, category, "not_found")
-                write_catalog(category, catalog)
+                with _STORE_LOCK:
+                    catalog = load_catalog(category)
+                    catalog[url] = CatalogRecord(url, category, "not_found")
+                    write_catalog(category, catalog)
                 stats.failed += 1
                 write_novel_log(log_file, stub_novel(url), "404", chapter_logging)
                 continue

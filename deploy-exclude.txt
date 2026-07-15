@@ -1,0 +1,22 @@
+# Paths NOT pushed by deploy.sh. Anything here is also safe from --delete on the
+# server, so the server-side library/, data/, and venv are preserved across deploys.
+# Leading "/" anchors to the repo root so we DON'T accidentally drop nested dirs
+# like reader-app/data/ (the CC-CEDICT dictionary) or reader-app/demo/.
+.git/
+/library/
+/data/
+/logs/
+/reports/
+**/__pycache__/
+*.pyc
+*.pyo
+*.bak
+*.egg-info/
+.venv/
+venv/
+.vscode/
+.codex/
+.agents/
+plan.md
+reader-app/frontend/node_modules/
+reader-app/frontend/dist/

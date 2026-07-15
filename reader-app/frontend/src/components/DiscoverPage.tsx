@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  api,
-  type MapData,
-  type ReadingItem,
-  type RecItem,
-  type TagCount,
-} from "../api/client";
-import { useReader } from "../store/reader";
+import { api, type MapData, type RecItem, type TagCount } from "../api/client";
 import { SemanticMap } from "./SemanticMap";
 import { RecCard } from "./RecCard";
+import { currentRoute, discoverPath, writeUrl } from "../routing";
 
 type Action =
   | { kind: "idle" }
@@ -19,10 +13,10 @@ const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
 
 export function DiscoverPage() {
-  const openNovel = useReader((s) => s.openNovel);
-
-  const [input, setInput] = useState("");
-  const [category, setCategory] = useState<string | null>(null);
+  const initialRoute = currentRoute();
+  const initial = initialRoute.page === "discover" ? initialRoute : null;
+  const [input, setInput] = useState(initial?.q ?? "");
+  const [category, setCategory] = useState<string | null>(initial?.category ?? null);
   const [action, setAction] = useState<Action>({ kind: "idle" });
   const [results, setResults] = useState<RecItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -31,18 +25,17 @@ export function DiscoverPage() {
 
   const [map, setMap] = useState<MapData | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
-  const [reading, setReading] = useState<ReadingItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     api.discoverMap().then(setMap).catch(() => {});
     api.discoverTags(16).then(setTags).catch(() => {});
-    api.reading().then(setReading).catch(() => {});
   }, []);
 
-  const runQuery = (text: string, cat = category) => {
+  const runQuery = (text: string, cat = category, updateRoute = true) => {
     const q = text.trim();
     if (!q) return;
+    if (updateRoute) writeUrl(discoverPath({ q, category: cat }), false);
     setAction({ kind: "query", text: q });
     setSelected(null);
     setLoading(true);
@@ -67,7 +60,8 @@ export function DiscoverPage() {
       });
   };
 
-  const explore = (nid: string, title: string, cat = category) => {
+  const explore = (nid: string, title: string, cat = category, updateRoute = true) => {
+    if (updateRoute) writeUrl(discoverPath({ similar: nid, title, category: cat }), false);
     setAction({ kind: "similar", nid, title });
     setSelected(nid);
     setLoading(true);
@@ -79,11 +73,19 @@ export function DiscoverPage() {
       .finally(() => setLoading(false));
   };
 
+  useEffect(() => {
+    if (initial?.similar) explore(initial.similar, initial.title || "this novel", initial.category, false);
+    else if (initial?.q) runQuery(initial.q, initial.category, false);
+    // Route state is captured once; App remounts this page on back/forward.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-run the active action when the category filter changes.
   const onCategory = (cat: string | null) => {
     setCategory(cat);
     if (action.kind === "query") runQuery(action.text, cat);
     else if (action.kind === "similar") explore(action.nid, action.title, cat);
+    else writeUrl(discoverPath({ category: cat }), false);
   };
 
   const onMapSelect = (nid: string) => {
@@ -151,22 +153,6 @@ export function DiscoverPage() {
           </div>
         )}
       </header>
-
-      {reading.length > 0 && action.kind === "idle" && (
-        <section className="dsc-shelf">
-          <div className="dsc-section-label">Continue reading</div>
-          <div className="dsc-shelf-row">
-            {reading.slice(0, 8).map((r) => (
-              <button key={r.nid} className="shelf-card" onClick={() => openNovel(r.nid, r.position)}>
-                <span className="shelf-title">{r.title}</span>
-                <span className="shelf-meta">
-                  ch {r.position + 1}{r.total ? `/${r.total}` : ""}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
 
       <div id="rec-results" className="dsc-body">
         <section className="dsc-results">

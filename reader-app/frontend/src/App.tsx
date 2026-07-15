@@ -1,67 +1,82 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useReader } from "./store/reader";
 import { useSettings, applySettings } from "./store/settings";
-import { LibraryPanel } from "./components/LibraryPanel";
+import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useAuth } from "./store/auth";
+import { AdminPanel } from "./components/AdminPanel";
+import { AuthPanel } from "./components/AuthPanel";
+import { LibraryPage } from "./components/LibraryPage";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TocPanel } from "./components/TocPanel";
 import { ScrollReader } from "./components/ScrollReader";
 import { DiscoverPage } from "./components/DiscoverPage";
+import { Footer } from "./components/Footer";
+import {
+  ROUTE_EVENT,
+  currentRoute,
+  discoverPath,
+  libraryPath,
+  navigate,
+  readerPath,
+  writeUrl,
+} from "./routing";
 
 export default function App() {
   const settings = useSettings();
+  const user = useAuth((s) => s.user);
+  const restoreAuth = useAuth((s) => s.restore);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [routeKey, setRouteKey] = useState(() => `${window.location.pathname}${window.location.search}`);
   const novel = useReader((s) => s.novel);
   const loading = useReader((s) => s.loading);
   const error = useReader((s) => s.error);
   const furthest = useReader((s) => s.furthest);
   const view = useReader((s) => s.view);
   const setView = useReader((s) => s.setView);
-  const leftOpen = useReader((s) => s.leftOpen);
   const rightOpen = useReader((s) => s.rightOpen);
   const tocOpen = useReader((s) => s.tocOpen);
-  const toggleLeft = useReader((s) => s.toggleLeft);
   const toggleRight = useReader((s) => s.toggleRight);
   const toggleToc = useReader((s) => s.toggleToc);
   const openNovel = useReader((s) => s.openNovel);
+  const chromeVisible = useReader((s) => s.chromeVisible);
 
   useEffect(() => applySettings(settings), [settings]);
-
-  // Deep link: /?open=<nid>&ch=<index> opens a novel directly (shareable, and
-  // lets the app restore to a specific novel on reload).
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const nid = params.get("open");
-    if (nid) {
-      const ch = params.get("ch");
-      openNovel(nid, ch ? Number(ch) : undefined);
-    }
-  }, [openNovel]);
+  useEffect(() => { restoreAuth(); }, [restoreAuth]);
+  useSettingsSync();
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement)?.tagName === "INPUT";
-      if (e.key === "Escape") {
-        toggleLeft(false);
-        toggleRight(false);
-        toggleToc(false);
-      } else if (!typing && (e.key === "l" || e.key === "L")) {
-        toggleLeft();
-      } else if (!typing && (e.key === "s" || e.key === "S")) {
-        toggleRight();
-      } else if (!typing && (e.key === "c" || e.key === "C")) {
-        toggleToc();
-      } else if (!typing && (e.key === "d" || e.key === "D")) {
+    const syncRoute = () => {
+      const route = currentRoute();
+      if (route.page === "reader") {
+        const location = route.chapter === null
+          ? undefined
+          : { chapter: route.chapter, line: route.line };
+        openNovel(route.nid, location, route.chapter === null ? "replace" : false);
+        const canonical = readerPath(route.nid, route.chapter, route.line);
+        if (`${window.location.pathname}${window.location.search}` !== canonical) writeUrl(canonical);
+      } else if (route.page === "library") {
+        setView("library");
+      } else {
         setView("discover");
+        if (window.location.pathname !== "/discover") writeUrl(discoverPath(route));
       }
+      setRouteKey(`${window.location.pathname}${window.location.search}`);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleLeft, toggleRight, toggleToc, setView]);
+    window.addEventListener("popstate", syncRoute);
+    window.addEventListener(ROUTE_EVENT, syncRoute);
+    syncRoute();
+    return () => {
+      window.removeEventListener("popstate", syncRoute);
+      window.removeEventListener(ROUTE_EVENT, syncRoute);
+    };
+  }, [openNovel, setView]);
 
   const total = novel?.total ?? 0;
   const spinePct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
 
   return (
-    <div className="app">
+    <div className={`app${view === "read" && !chromeVisible ? " chrome-hidden" : ""}`}>
       {/* Progress gutter — the spine of the bound book, filling cinnabar as you read. */}
       <div className="spine" aria-hidden>
         <div className="spine-fill" style={{ height: `${spinePct}%` }} />
@@ -70,20 +85,24 @@ export default function App() {
       <header className="topbar">
         <div className="topbar-side">
           <button
+            className={`icon-btn${view === "library" ? " is-active" : ""}`}
+            onClick={() => navigate(libraryPath())}
+            aria-label="Library"
+          >
+            <span className="seal-glyph small" aria-hidden>读</span>
+          </button>
+          <button
             className={`icon-btn${view === "discover" ? " is-active" : ""}`}
-            onClick={() => setView("discover")}
-            aria-label="Discover (D)"
+            onClick={() => navigate(discoverPath())}
+            aria-label="Discover"
           >
             <CompassIcon />
-          </button>
-          <button className="icon-btn" onClick={() => toggleLeft()} aria-label="Library (L)">
-            <span className="seal-glyph small" aria-hidden>读</span>
           </button>
           {novel && view === "read" && (
             <button
               className="icon-btn"
               onClick={() => toggleToc()}
-              aria-label="Contents (C)"
+              aria-label="Contents"
             >
               <ContentsIcon />
             </button>
@@ -102,7 +121,15 @@ export default function App() {
           )}
         </div>
         <div className="topbar-side topbar-side-right">
-          <button className="icon-btn" onClick={() => toggleRight()} aria-label="Settings (S)">
+          {user?.username === "lingwei" && (
+            <button className="icon-btn" onClick={() => setAdminOpen(true)} aria-label="Admin jobs">
+              <span className="account-glyph" aria-hidden>管</span>
+            </button>
+          )}
+          <button className="account-btn" onClick={() => setAuthOpen(true)} aria-label="Account">
+            {user?.username ?? "Log in"}
+          </button>
+          <button className="icon-btn" onClick={() => toggleRight()} aria-label="Settings">
             <GearIcon />
           </button>
         </div>
@@ -110,7 +137,9 @@ export default function App() {
 
       <main className="stage">
         {view === "discover" ? (
-          <DiscoverPage />
+          <DiscoverPage key={routeKey} />
+        ) : view === "library" ? (
+          <LibraryPage key={routeKey} />
         ) : loading ? (
           <div className="stage-note">Opening…</div>
         ) : error ? (
@@ -118,17 +147,11 @@ export default function App() {
         ) : novel ? (
           <ScrollReader key={novel.nid} />
         ) : (
-          <DiscoverPage />
+          <DiscoverPage key={routeKey} />
         )}
       </main>
 
-      {/* Left drawer — library */}
-      <div className={`scrim${leftOpen ? " is-open" : ""}`} onClick={() => toggleLeft(false)} />
-      <aside className={`drawer left${leftOpen ? " is-open" : ""}`} aria-hidden={!leftOpen}>
-        <LibraryPanel />
-      </aside>
-
-      {/* Left drawer — table of contents (mutually exclusive with the library) */}
+      {/* Left drawer — table of contents */}
       <div className={`scrim${tocOpen ? " is-open" : ""}`} onClick={() => toggleToc(false)} />
       <aside className={`drawer left${tocOpen ? " is-open" : ""}`} aria-hidden={!tocOpen}>
         <TocPanel />
@@ -139,6 +162,13 @@ export default function App() {
       <aside className={`drawer right${rightOpen ? " is-open" : ""}`} aria-hidden={!rightOpen}>
         <SettingsPanel />
       </aside>
+
+      <Footer />
+
+      {authOpen && <AuthPanel onClose={() => setAuthOpen(false)} />}
+      {adminOpen && user?.username === "lingwei" && (
+        <AdminPanel onClose={() => setAdminOpen(false)} />
+      )}
     </div>
   );
 }

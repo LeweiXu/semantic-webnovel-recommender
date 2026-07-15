@@ -1,13 +1,18 @@
 import { useSettings, type Theme, type ReadingMode } from "../store/settings";
+import { useReader } from "../store/reader";
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "paper", label: "Paper" },
   { id: "sepia", label: "Sepia" },
   { id: "night", label: "Night" },
+  { id: "black", label: "Black" },
 ];
 
 export function SettingsPanel() {
   const s = useSettings();
+  const novel = useReader((st) => st.novel);
+  const topChapter = useReader((st) => st.topChapter);
+  const resetProgress = useReader((st) => st.resetProgressToCurrent);
 
   return (
     <div className="panel">
@@ -22,6 +27,18 @@ export function SettingsPanel() {
           role="switch"
           aria-checked={s.pinyin}
           onClick={() => s.set({ pinyin: !s.pinyin })}
+        >
+          <span className="toggle-knob" />
+        </button>
+      </div>
+
+      <div className="setting">
+        <label className="setting-label">Synopsis pinyin</label>
+        <button
+          className={`toggle${s.synopsisPinyin ? " is-on" : ""}`}
+          role="switch"
+          aria-checked={s.synopsisPinyin}
+          onClick={() => s.set({ synopsisPinyin: !s.synopsisPinyin })}
         >
           <span className="toggle-knob" />
         </button>
@@ -99,6 +116,21 @@ export function SettingsPanel() {
       </div>
 
       <div className="setting setting-block">
+        <label className="setting-label">
+          Contrast <span className="setting-value">{s.contrast}%</span>
+        </label>
+        <input
+          type="range"
+          min={50}
+          max={150}
+          step={5}
+          value={s.contrast}
+          onChange={(e) => s.set({ contrast: Number(e.target.value) })}
+          aria-label="Text and background contrast"
+        />
+      </div>
+
+      <div className="setting setting-block">
         <label className="setting-label">Reading mode</label>
         <div className="segmented">
           {(["scroll", "paginate"] as ReadingMode[]).map((m) => (
@@ -115,6 +147,19 @@ export function SettingsPanel() {
           ))}
         </div>
       </div>
+
+      {novel && (
+        <div className="setting setting-block">
+          <label className="setting-label">Progress</label>
+          <button className="btn-outline" onClick={() => resetProgress()}>
+            Reset progress to here (ch {topChapter + 1})
+          </button>
+          <p className="setting-hint">
+            Moves your saved place back to the top of the current page — handy after
+            an accidental jump to a later chapter.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

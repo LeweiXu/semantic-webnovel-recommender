@@ -17,6 +17,15 @@ data/rec_index/
 # Personal reading bookmarks (read.py).
 data/reading_progress.json
 
+# Reader-app runtime auth/state: secret + password hashes + per-user progress +
+# admin job registry. Never commit these.
+data/.jwt_secret
+data/users.json
+data/user_progress/
+data/user_settings/
+data/admin_jobs.json
+data/admin_command_history.json
+
 library/
 reports/
 

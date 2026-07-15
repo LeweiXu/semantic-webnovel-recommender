@@ -10,7 +10,7 @@ interface Props {
 
 // Rebuild paragraphs from the flat token stream: "\n" tokens are paragraph
 // boundaries. Blank runs collapse so spacing is governed by CSS, not the source.
-function splitParagraphs(tokens: Token[]): Token[][] {
+export function splitParagraphs(tokens: Token[]): Token[][] {
   const paras: Token[][] = [];
   let current: Token[] = [];
   for (const tok of tokens) {

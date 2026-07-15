@@ -3,10 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 import zipfile
+import sys
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
+
+BACKEND_DIR = Path(__file__).resolve().parents[1] / "reader-app" / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
 
 from recsys.catalog import CatalogRecord
 from recsys.store import NovelRecord
@@ -219,6 +223,86 @@ class ReadingProgressTests(unittest.TestCase):
             ),
             "第1章 One\n\nFirst",
         )
+
+
+class ReaderAuthTests(unittest.TestCase):
+    def test_password_hash_and_jwt_round_trip(self) -> None:
+        import auth
+
+        password_hash = auth.hash_password("correct horse battery staple")
+        self.assertTrue(auth.verify_password("correct horse battery staple", password_hash))
+        self.assertFalse(auth.verify_password("wrong password", password_hash))
+        with patch.dict("os.environ", {"NOVEL_JWT_SECRET": "test-secret"}):
+            token = auth.create_token("alice")
+            self.assertEqual(auth.decode_token(token), "alice")
+
+
+class AdminJobTests(unittest.TestCase):
+    def test_argv_builder_accepts_only_known_scripts(self) -> None:
+        import admin_jobs
+
+        argv = admin_jobs.build_argv(
+            "download categories gl --limit 50", python="/venv/bin/python"
+        )
+        self.assertEqual(argv[0], "/venv/bin/python")
+        self.assertEqual(Path(argv[1]).name, "download.py")
+        self.assertEqual(argv[2:], ["categories", "gl", "--limit", "50"])
+
+        for command in ("rm -rf /", "download categories gl; rm -rf /", "download $(id)"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    admin_jobs.build_argv(command)
+
+
+class UserProgressTests(unittest.TestCase):
+    def test_users_are_isolated_and_positions_never_rewind(self) -> None:
+        import user_progress
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_progress, "PROGRESS_DIR", Path(directory)
+        ):
+            user_progress.set_position("alice", "novel", 5, title="N", total=10)
+            user_progress.set_position("alice", "novel", 2, title="N", total=10)
+            user_progress.set_position("bob", "novel", 1, title="N", total=10)
+
+            self.assertEqual(user_progress.get_position("alice", "novel"), 5)
+            self.assertEqual(user_progress.get_position("bob", "novel"), 1)
+            self.assertEqual(user_progress.all_progress("alice")["novel"]["position"], 5)
+
+    def test_rendered_line_is_monotonic_and_can_be_force_reset(self) -> None:
+        import user_progress
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_progress, "PROGRESS_DIR", Path(directory)
+        ):
+            user_progress.set_position("alice", "novel", 3, 18)
+            user_progress.set_position("alice", "novel", 3, 7)
+            self.assertEqual(user_progress.get_entry("alice", "novel")["line"], 18)
+            user_progress.set_position("alice", "novel", 3, 7, force=True)
+            self.assertEqual(user_progress.get_entry("alice", "novel")["line"], 7)
+
+    def test_unstarted_chapter_has_no_line_bookmark(self) -> None:
+        import user_progress
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_progress, "PROGRESS_DIR", Path(directory)
+        ):
+            user_progress.set_position("alice", "novel", 0, None)
+            self.assertNotIn("line", user_progress.get_entry("alice", "novel"))
+            user_progress.set_position("alice", "novel", 0, 0)
+            self.assertEqual(user_progress.get_entry("alice", "novel")["line"], 0)
+
+
+class UserSettingsTests(unittest.TestCase):
+    def test_contrast_is_persisted_and_unknown_keys_are_discarded(self) -> None:
+        import user_settings
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_settings, "SETTINGS_DIR", Path(directory)
+        ):
+            saved = user_settings.put("alice", {"contrast": 125, "unknown": "value"})
+            self.assertEqual(saved, {"contrast": 125})
+            self.assertEqual(user_settings.get("alice"), {"contrast": 125})
 
 
 class TtsTests(unittest.TestCase):

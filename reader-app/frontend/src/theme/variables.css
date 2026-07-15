@@ -35,7 +35,9 @@
   --bg-veil: rgba(31, 27, 23, 0.32);
   --surface: #fbf9f3;
   --surface-raised: #ffffff;
-  --ink: #232020;
+  --ink-base: #232020;
+  --ink-max: #000000;
+  --ink: var(--ink-base);
   --ink-soft: #5a5247;
   --muted: #9a8e7c;
   --pinyin: #a99c86;
@@ -53,7 +55,9 @@
   --bg-veil: rgba(58, 47, 34, 0.34);
   --surface: #f3e9d6;
   --surface-raised: #f8f0e0;
-  --ink: #3a2f22;
+  --ink-base: #3a2f22;
+  --ink-max: #120d08;
+  --ink: var(--ink-base);
   --ink-soft: #6b5b45;
   --muted: #a8906a;
   --pinyin: #9d855f;
@@ -71,7 +75,9 @@
   --bg-veil: rgba(0, 0, 0, 0.55);
   --surface: #1e1b15;
   --surface-raised: #262219;
-  --ink: #e4dccb;
+  --ink-base: #e4dccb;
+  --ink-max: #ffffff;
+  --ink: var(--ink-base);
   --ink-soft: #b3a991;
   --muted: #8a8170;
   --pinyin: #8f846d;
@@ -80,5 +86,25 @@
   --accent: #d2553f;
   --accent-ink: #16140f;
   --shadow: 0 22px 60px -30px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}
+
+/* ── Black (pure black, OLED) ───────────────────────────────────────────── */
+[data-theme="black"] {
+  --bg: #000000;
+  --bg-veil: rgba(0, 0, 0, 0.7);
+  --surface: #0a0a0a;
+  --surface-raised: #151515;
+  --ink-base: #dcdcdc;
+  --ink-max: #ffffff;
+  --ink: var(--ink-base);
+  --ink-soft: #a4a4a4;
+  --muted: #6d6d6d;
+  --pinyin: #7c7c7c;
+  --hairline: #1c1c1c;
+  --hairline-strong: #2b2b2b;
+  --accent: #d2553f;
+  --accent-ink: #000000;
+  --shadow: 0 22px 60px -30px rgba(0, 0, 0, 0.9);
   color-scheme: dark;
 }

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from recsys.store import NovelRecord, load_all
 from webnovel.library import Chapter, local_chapters, local_path, local_synopsis
+from scripts.repo_paths import LIBRARY_DIR
 
 # Small LRU of parsed chapter lists keyed by novel url. A median novel is
 # ~300k chars; parsing it on every chapter request would be wasteful, so keep a
@@ -24,6 +25,7 @@ _cache_lock = threading.Lock()
 # slow to repeat per request. Cache it; it only changes when a novel is
 # downloaded, which calls invalidate().
 _records_cache: dict[str, NovelRecord] | None = None
+_records_mtimes: tuple[tuple[str, int], ...] | None = None
 _records_lock = threading.Lock()
 
 
@@ -36,10 +38,18 @@ class ResolvedNovel:
 
 
 def _records() -> dict[str, NovelRecord]:
-    global _records_cache
+    global _records_cache, _records_mtimes
     with _records_lock:
-        if _records_cache is None:
+        mtimes = tuple(
+            sorted(
+                (str(path), path.stat().st_mtime_ns)
+                for path in LIBRARY_DIR.glob("*/metadata.jsonl")
+                if path.is_file()
+            )
+        )
+        if _records_cache is None or mtimes != _records_mtimes:
             _records_cache = load_all()
+            _records_mtimes = mtimes
         return _records_cache
 
 
@@ -78,8 +88,9 @@ def resolve(url: str) -> ResolvedNovel | None:
 
 
 def invalidate(url: str) -> None:
-    global _records_cache
+    global _records_cache, _records_mtimes
     with _cache_lock:
         _chapter_cache.pop(url, None)
     with _records_lock:
         _records_cache = None  # a download added/changed a metadata record
+        _records_mtimes = None

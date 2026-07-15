@@ -4,6 +4,27 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+class RegisterIn(BaseModel):
+    username: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    username: str
+    created: str = ""
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
 class ReadingItem(BaseModel):
     url: str
     nid: str
@@ -11,8 +32,11 @@ class ReadingItem(BaseModel):
     author: str = ""
     category: str = ""
     position: int = 0
+    line: int | None = None
     total: int | None = None
     updated: str = ""
+    tags: list[str] = []
+    synopsis: str = ""
 
 
 class SearchItem(BaseModel):
@@ -30,6 +54,11 @@ class ChapterStub(BaseModel):
     title: str
 
 
+class Token(BaseModel):
+    t: str
+    py: str | None = None
+
+
 class NovelDetail(BaseModel):
     url: str
     nid: str
@@ -37,15 +66,12 @@ class NovelDetail(BaseModel):
     author: str = ""
     category: str = ""
     synopsis: str = ""
+    synopsis_tokens: list[Token] = []
     downloaded: bool = True
     total: int
     position: int = 0
+    line: int | None = None
     chapters: list[ChapterStub]
-
-
-class Token(BaseModel):
-    t: str
-    py: str | None = None
 
 
 class ChapterContent(BaseModel):
@@ -59,11 +85,14 @@ class ChapterContent(BaseModel):
 
 class ProgressIn(BaseModel):
     position: int
+    line: int | None = None  # null page top; 0+ rendered body line
+    reset: bool = False  # force the bookmark to (position, line), even backward
 
 
 class ProgressOut(BaseModel):
     ok: bool
     position: int
+    line: int | None = None
     updated: str
 
 

@@ -1,5 +1,26 @@
-// Typed access to the reader backend. Same-origin in production; the Vite dev
-// server proxies /api to the FastAPI backend.
+// Typed access to the reader backend. Same-origin remains supported, while a
+// deployed frontend can point at the API with VITE_API_BASE.
+
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+let authToken: string | null = null;
+
+export function setApiAuthToken(token: string | null) {
+  authToken = token;
+}
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+function authHeaders(headers?: HeadersInit): Headers {
+  const result = new Headers(headers);
+  if (authToken) result.set("Authorization", `Bearer ${authToken}`);
+  return result;
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(apiUrl(path), { ...init, headers: authHeaders(init.headers) });
+}
 
 export interface ReadingItem {
   url: string;
@@ -8,8 +29,11 @@ export interface ReadingItem {
   author: string;
   category: string;
   position: number;
+  line: number | null;
   total: number | null;
   updated: string;
+  tags: string[];
+  synopsis: string;
 }
 
 export interface SearchItem {
@@ -34,9 +58,11 @@ export interface NovelDetail {
   author: string;
   category: string;
   synopsis: string;
+  synopsis_tokens: Token[];
   downloaded: boolean;
   total: number;
   position: number;
+  line: number | null;
   chapters: ChapterStub[];
 }
 
@@ -111,9 +137,74 @@ export interface DefineOut {
   perChar: PerChar[];
 }
 
+export interface User {
+  username: string;
+  created: string;
+}
+
+export interface TokenOut {
+  access_token: string;
+  token_type: string;
+  user: User;
+}
+
+export interface AdminJob {
+  id: string;
+  script: string;
+  args: string[];
+  pid: number;
+  status: string;
+  started: string;
+  logfile: string;
+  returncode: number | null;
+}
+
+export interface AdminCommand {
+  id: string;
+  command: string;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const res = await apiFetch(url);
+  if (!res.ok) throw await responseError(res);
+  return res.json() as Promise<T>;
+}
+
+async function responseError(res: Response): Promise<Error> {
+  try {
+    const body = await res.json();
+    return new Error(body.detail || `${res.status} ${res.statusText}`);
+  } catch {
+    return new Error(`${res.status} ${res.statusText}`);
+  }
+}
+
+async function postJSON<T>(url: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+  const res = await apiFetch(url, {
+    ...init,
+    method: "POST",
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw await responseError(res);
+  return res.json() as Promise<T>;
+}
+
+async function putJSON<T>(url: string, body: unknown): Promise<T> {
+  const res = await apiFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await responseError(res);
+  return res.json() as Promise<T>;
+}
+
+async function deleteJSON<T>(url: string): Promise<T> {
+  const res = await apiFetch(url, { method: "DELETE" });
+  if (!res.ok) throw await responseError(res);
   return res.json() as Promise<T>;
 }
 
@@ -131,23 +222,37 @@ export const api = {
   recommend: (q: string, n = 12, category?: string) =>
     getJSON<{ results: RecItem[]; error?: string }>(
       `/api/recommend?q=${encodeURIComponent(q)}&n=${n}` +
-        (category ? `&category=${category}` : ""),
+        (category ? `&category=${encodeURIComponent(category)}` : ""),
     ),
   similar: (nid: string, n = 12, category?: string) =>
     getJSON<SimilarOut>(
-      `/api/similar/${nid}?n=${n}` + (category ? `&category=${category}` : ""),
+      `/api/similar/${nid}?n=${n}` +
+        (category ? `&category=${encodeURIComponent(category)}` : ""),
     ),
   discoverMap: () => getJSON<MapData>(`/api/discover/map`),
   discoverTags: (limit = 18) => getJSON<TagCount[]>(`/api/discover/tags?limit=${limit}`),
-  setProgress: async (nid: string, position: number) => {
-    const res = await fetch(`/api/novel/${nid}/progress`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ position }),
-    });
-    if (!res.ok) throw new Error(`progress ${res.status}`);
-    return res.json() as Promise<{ ok: boolean; position: number; updated: string }>;
-  },
+  setProgress: (nid: string, position: number, line: number | null, reset = false, keepalive = false) =>
+    postJSON<{ ok: boolean; position: number; line: number | null; updated: string }>(
+      `/api/novel/${nid}/progress`,
+      { position, line, reset },
+      { keepalive },
+    ),
+  register: (username: string, password: string) =>
+    postJSON<TokenOut>("/api/auth/register", { username, password }),
+  login: (username: string, password: string) =>
+    postJSON<TokenOut>("/api/auth/login", { username, password }),
+  me: () => getJSON<User>("/api/auth/me"),
+  getSettings: () => getJSON<Record<string, unknown>>("/api/settings"),
+  putSettings: (settings: Record<string, unknown>) =>
+    putJSON<Record<string, unknown>>("/api/settings", settings),
+  adminJobs: () => getJSON<AdminJob[]>("/api/admin/jobs"),
+  startAdminJob: (command: string) =>
+    postJSON<AdminJob>("/api/admin/jobs", { command }),
+  stopAdminJob: (id: string) =>
+    postJSON<AdminJob>(`/api/admin/jobs/${encodeURIComponent(id)}/stop`),
+  adminHistory: () => getJSON<AdminCommand[]>("/api/admin/jobs/history"),
+  deleteAdminHistory: (id: string) =>
+    deleteJSON<AdminCommand[]>(`/api/admin/jobs/history/${encodeURIComponent(id)}`),
 };
 
 // Stream a download as Server-Sent Events. Calls onEvent for each parsed event;
@@ -156,13 +261,21 @@ export async function downloadStream(
   url: string,
   onEvent: (event: string, data: any) => void,
 ): Promise<void> {
-  const res = await fetch("/api/download", {
+  const res = await apiFetch("/api/download", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   });
-  if (!res.ok || !res.body) throw new Error(`download ${res.status}`);
-  const reader = res.body.getReader();
+  if (!res.ok) throw await responseError(res);
+  if (!res.body) throw new Error("Download stream was unavailable");
+  await readEventStream(res.body, onEvent);
+}
+
+async function readEventStream(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: string, data: any) => void,
+): Promise<void> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
@@ -187,4 +300,15 @@ export async function downloadStream(
       }
     }
   }
+}
+
+export async function adminLogStream(
+  id: string,
+  onEvent: (event: string, data: any) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await apiFetch(`/api/admin/jobs/${encodeURIComponent(id)}/log`, { signal });
+  if (!res.ok) throw await responseError(res);
+  if (!res.body) throw new Error("Log stream was unavailable");
+  await readEventStream(res.body, onEvent);
 }

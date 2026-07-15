@@ -7,23 +7,29 @@ editable `webnovel`/`recsys`/`scraper` imports resolve.
 """
 from __future__ import annotations
 
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from recsys.store import load_all
-from webnovel import progress
 from webnovel.library import list_library
 
+import admin_jobs
 import annotate
+import auth
 import dictionary
 import novels
 import recommend_api
+import user_progress
+import user_settings
+from auth import current_user, optional_user
 from download_api import download_events
 from ids import nid_decode, nid_encode
 from schemas import (
@@ -32,16 +38,36 @@ from schemas import (
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
+app.include_router(auth.router)
+app.include_router(admin_jobs.router)
 
-# Dev convenience: the Vite dev server (5173) calls the API on 8000.
+# Always retain local development origins and add configured production origins.
+_cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_cors_origins.extend(
+    origin.strip()
+    for origin in os.environ.get("NOVEL_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=list(dict.fromkeys(_cors_origins)),
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for client-side routes such as /reader/<nid>."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return await super().get_response("index.html", scope)
 
 # Annotated chapters are pure functions of their text, so cache the token lists
 # (segmentation + pinyin) to make re-scrolling and revisits instant.
@@ -76,10 +102,10 @@ def _annotated_tokens(nid: str, idx: int, body: str) -> list[dict]:
 # ── Library ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/library/reading", response_model=list[ReadingItem])
-def reading() -> list[ReadingItem]:
+def reading(username: str = Depends(current_user)) -> list[ReadingItem]:
     records = load_all()
     items: list[ReadingItem] = []
-    for url, entry in progress.all_progress().items():
+    for url, entry in user_progress.all_progress(username).items():
         record = records.get(url)
         items.append(ReadingItem(
             url=url,
@@ -88,8 +114,11 @@ def reading() -> list[ReadingItem]:
             author=record.author if record else "",
             category=record.category if record else "",
             position=int(entry.get("position", 0)),
+            line=int(entry["line"]) if entry.get("line") is not None else None,
             total=entry.get("total"),
             updated=entry.get("updated", ""),
+            tags=list(record.tags[:8]) if record else [],
+            synopsis=(record.synopsis or "") if record else "",
         ))
     return items
 
@@ -125,10 +154,16 @@ def _resolve_or_404(nid: str):
 
 
 @app.get("/api/novel/{nid}", response_model=NovelDetail)
-def novel_detail(nid: str) -> NovelDetail:
+def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> NovelDetail:
     resolved = _resolve_or_404(nid)
     total = len(resolved.chapters)
-    position = min(progress.get_position(resolved.url), max(total - 1, 0))
+    entry = user_progress.get_entry(username, resolved.url) if username else {}
+    saved = int(entry.get("position", 0))
+    position = min(saved, max(total - 1, 0))
+    line = int(entry["line"]) if position == saved and entry.get("line") is not None else None
+    # Annotate the synopsis too (pinyin + clickable words). The client only shows
+    # it when the reader turns the synopsis-pinyin setting on; cache like chapters.
+    synopsis_tokens = _annotated_tokens(nid, -1, resolved.synopsis) if resolved.synopsis else []
     return NovelDetail(
         url=resolved.url,
         nid=nid,
@@ -136,9 +171,11 @@ def novel_detail(nid: str) -> NovelDetail:
         author=resolved.record.author,
         category=resolved.record.category,
         synopsis=resolved.synopsis,
+        synopsis_tokens=synopsis_tokens,
         downloaded=True,
         total=total,
         position=position,
+        line=line,
         chapters=[
             ChapterStub(index=i, title=c.title)
             for i, c in enumerate(resolved.chapters)
@@ -170,17 +207,35 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
 
 
 @app.post("/api/novel/{nid}/progress", response_model=ProgressOut)
-def set_progress(nid: str, body: ProgressIn) -> ProgressOut:
+def set_progress(
+    nid: str, body: ProgressIn, username: str = Depends(current_user)
+) -> ProgressOut:
     resolved = _resolve_or_404(nid)
     total = len(resolved.chapters)
-    # Monotonic: never rewind below the furthest chapter already reached, so
-    # re-reading backward doesn't move read.py's bookmark back.
-    current = progress.get_position(resolved.url)
-    target = max(0, min(body.position, max(total - 1, 0)))
-    target = max(current, target)
-    progress.set_position(resolved.url, target, title=resolved.record.title, total=total)
-    entry = progress.all_progress().get(resolved.url, {})
-    return ProgressOut(ok=True, position=target, updated=entry.get("updated", ""))
+    position = max(0, min(body.position, max(total - 1, 0)))
+    line = max(0, body.line) if body.line is not None else None
+    entry = user_progress.set_position(
+        username, resolved.url, position, line,
+        title=resolved.record.title, total=total, force=body.reset,
+    )
+    return ProgressOut(
+        ok=True,
+        position=int(entry.get("position", 0)),
+        line=int(entry["line"]) if entry.get("line") is not None else None,
+        updated=entry.get("updated", ""),
+    )
+
+
+# ── Per-user settings (stored alongside progress) ────────────────────────────
+
+@app.get("/api/settings")
+def get_settings(username: str = Depends(current_user)) -> dict:
+    return user_settings.get(username)
+
+
+@app.put("/api/settings")
+def put_settings(body: dict, username: str = Depends(current_user)) -> dict:
+    return user_settings.put(username, body)
 
 
 # ── Recommender (Discover page, bundled demo corpus) ─────────────────────────
@@ -242,7 +297,7 @@ def define(word: str = Query(min_length=1)) -> DefineOut:
 # ── Download (SSE) ───────────────────────────────────────────────────────────
 
 @app.post("/api/download")
-def download(body: dict):
+def download(body: dict, _username: str = Depends(current_user)):
     url = body.get("url", "")
     return StreamingResponse(
         download_events(url),
@@ -257,6 +312,11 @@ def health() -> dict:
 
 
 # ── Static frontend (production single-port mode) ────────────────────────────
-# Mounted last so /api/* always wins. Present only after `npm run build`.
-if FRONTEND_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+# Mounted last so /api/* always wins. ``check_dir=False`` keeps the route
+# registered even when uvicorn starts before the frontend is built; once dist/
+# appears, deep-link reloads work without rebuilding the FastAPI route table.
+app.mount(
+    "/",
+    SPAStaticFiles(directory=str(FRONTEND_DIST), html=True, check_dir=False),
+    name="frontend",
+)

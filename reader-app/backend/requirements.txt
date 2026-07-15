@@ -4,3 +4,7 @@
 fastapi
 uvicorn[standard]
 pypinyin
+passlib[bcrypt]
+bcrypt<4.1
+python-jose[cryptography]
+python-multipart

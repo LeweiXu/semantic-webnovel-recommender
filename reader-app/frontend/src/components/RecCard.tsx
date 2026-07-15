@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { downloadStream, type RecItem } from "../api/client";
 import { useReader } from "../store/reader";
+import { useAuth } from "../store/auth";
 
 interface Props {
   rec: RecItem;
@@ -17,12 +18,18 @@ const catLabel = (c: string) => CAT_LABEL[c] ?? c;
 // then unlocks Read — a proof-of-concept of going demo → download → read.
 export function RecCard({ rec, delay, onSimilar, onTag }: Props) {
   const openNovel = useReader((s) => s.openNovel);
+  const user = useAuth((s) => s.user);
   const [dl, setDl] = useState<"idle" | "running" | "error" | "done">("idle");
   const [line, setLine] = useState("");
 
   const downloaded = rec.downloaded || dl === "done";
 
   const download = async () => {
+    if (!user) {
+      setDl("error");
+      setLine("Log in from the account button to download novels.");
+      return;
+    }
     setDl("running");
     setLine("Starting download…");
     try {

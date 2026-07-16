@@ -12,6 +12,12 @@ function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
+// A novel id may be a readable "<category>/<stem>" slug (with Han characters and
+// one slash) or a legacy base64 id. Encode each path segment but keep the slash.
+function encodeId(id: string): string {
+  return id.split("/").map(encodeURIComponent).join("/");
+}
+
 function authHeaders(headers?: HeadersInit): Headers {
   const result = new Headers(headers);
   if (authToken) result.set("Authorization", `Bearer ${authToken}`);
@@ -25,6 +31,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
 export interface ReadingItem {
   url: string;
   nid: string;
+  slug: string | null;
   title: string;
   author: string;
   category: string;
@@ -39,6 +46,7 @@ export interface ReadingItem {
 export interface SearchItem {
   url: string;
   nid: string;
+  slug: string | null;
   title: string;
   author: string;
   category: string;
@@ -54,6 +62,7 @@ export interface ChapterStub {
 export interface NovelDetail {
   url: string;
   nid: string;
+  slug: string;
   title: string;
   author: string;
   category: string;
@@ -83,6 +92,7 @@ export interface ChapterContent {
 
 export interface RecItem {
   nid: string;
+  slug: string | null;
   url: string;
   title: string;
   author: string;
@@ -213,10 +223,10 @@ export const api = {
   reading: () => getJSON<ReadingItem[]>("/api/library/reading"),
   search: (q: string) =>
     getJSON<SearchItem[]>(`/api/library/search?q=${encodeURIComponent(q)}`),
-  novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${nid}`),
+  novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),
   chapter: (nid: string, idx: number, annotate: boolean) =>
     getJSON<ChapterContent>(
-      `/api/novel/${nid}/chapter/${idx}?annotate=${annotate ? 1 : 0}`,
+      `/api/novel/${encodeId(nid)}/chapter/${idx}?annotate=${annotate ? 1 : 0}`,
     ),
   define: (word: string) =>
     getJSON<DefineOut>(`/api/define?word=${encodeURIComponent(word)}`),
@@ -234,7 +244,7 @@ export const api = {
   discoverTags: (limit = 18) => getJSON<TagCount[]>(`/api/discover/tags?limit=${limit}`),
   setProgress: (nid: string, position: number, line: number | null, reset = false, keepalive = false) =>
     postJSON<{ ok: boolean; position: number; line: number | null; updated: string }>(
-      `/api/novel/${nid}/progress`,
+      `/api/novel/${encodeId(nid)}/progress`,
       { position, line, reset },
       { keepalive },
     ),

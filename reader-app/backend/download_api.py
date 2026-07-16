@@ -69,4 +69,10 @@ def download_events(url: str):
     record = novels.record_for_url(url)
     title = record.title if record else url
     total = len(novels.chapters_for(url, record)) if record else 0
-    yield _sse("done", {"nid": nid_encode(url), "url": url, "title": title, "chapters": total})
+    yield _sse("done", {
+        "nid": nid_encode(url),
+        "slug": novels.slug_for(record),
+        "url": url,
+        "title": title,
+        "chapters": total,
+    })

@@ -10,6 +10,29 @@ const isNovelUrl = (s: string) =>
 const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
 
+// The reading shelf takes ~1s to come back from the backend, so cache the last
+// result per user in localStorage and show it instantly, then refresh in the
+// background (stale-while-revalidate).
+const READING_CACHE_PREFIX = "reader:library:reading:";
+
+function readReadingCache(username: string): ReadingItem[] {
+  try {
+    const raw = localStorage.getItem(READING_CACHE_PREFIX + username);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeReadingCache(username: string, items: ReadingItem[]) {
+  try {
+    localStorage.setItem(READING_CACHE_PREFIX + username, JSON.stringify(items));
+  } catch {
+    /* quota or private mode — the network fetch still works, just no cache */
+  }
+}
+
 function pct(position: number, total: number | null): number {
   if (!total) return 0;
   return Math.min(100, Math.round(((position + 1) / total) * 100));
@@ -17,8 +40,11 @@ function pct(position: number, total: number | null): number {
 
 export function LibraryPage() {
   const user = useAuth((s) => s.user);
+  const ready = useAuth((s) => s.ready);
 
-  const [reading, setReading] = useState<ReadingItem[]>([]);
+  const [reading, setReading] = useState<ReadingItem[]>(() =>
+    user ? readReadingCache(user.username) : [],
+  );
   const route = currentRoute();
   const [query, setQuery] = useState(route.page === "library" ? route.q : "");
   const [results, setResults] = useState<SearchItem[]>([]);
@@ -30,7 +56,15 @@ export function LibraryPage() {
       setReading([]);
       return;
     }
-    api.reading().then(setReading).catch(() => {});
+    // Paint the cached shelf immediately, then reconcile with the server.
+    setReading(readReadingCache(user.username));
+    api
+      .reading()
+      .then((items) => {
+        setReading(items);
+        writeReadingCache(user.username, items);
+      })
+      .catch(() => {});
   };
   useEffect(refreshReading, [user]);
 
@@ -109,7 +143,7 @@ export function LibraryPage() {
                 <button
                   className="lib-result-main"
                   disabled={!r.downloaded}
-                  onClick={() => r.downloaded && navigate(novelPath(r.nid))}
+                  onClick={() => r.downloaded && navigate(novelPath(r.slug ?? r.nid))}
                   title={r.downloaded ? "" : "Not downloaded yet"}
                 >
                   <span className="lib-result-title">{r.title}</span>
@@ -153,7 +187,9 @@ export function LibraryPage() {
           <div className="dsc-section-label">Currently reading</div>
           {reading.length === 0 ? (
             <div className="dsc-note dsc-idle">
-              {user
+              {!ready
+                ? " " /* auth still restoring — don't flash the logged-out prompt */
+                : user
                 ? "Nothing yet. Search above, or find something on Discover."
                 : "Log in from the account button to keep a reading shelf."}
             </div>
@@ -163,7 +199,7 @@ export function LibraryPage() {
                 <button
                   key={r.nid}
                   className="lib-card"
-                  onClick={() => navigate(novelPath(r.nid))}
+                  onClick={() => navigate(novelPath(r.slug ?? r.nid))}
                 >
                   <div className="lib-card-head">
                     <h3 className="lib-card-title">{r.title}</h3>

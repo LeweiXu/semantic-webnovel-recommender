@@ -22,6 +22,9 @@
 
   --seal: #b23a2e;
   --seal-soft: rgba(178, 58, 46, 0.12);
+  /* Word hover highlight in the reader. Faint cinnabar on light themes; the dark
+     themes override it with a light wash so it stays visible on near-black. */
+  --word-hover: var(--seal-soft);
 
   --radius: 10px;
   --drawer-w: 21rem;
@@ -86,6 +89,7 @@
   --accent: #d2553f;
   --accent-ink: #16140f;
   --shadow: 0 22px 60px -30px rgba(0, 0, 0, 0.8);
+  --word-hover: rgba(255, 255, 255, 0.13);
   color-scheme: dark;
 }
 
@@ -106,5 +110,6 @@
   --accent: #d2553f;
   --accent-ink: #000000;
   --shadow: 0 22px 60px -30px rgba(0, 0, 0, 0.9);
+  --word-hover: rgba(255, 255, 255, 0.16);
   color-scheme: dark;
 }

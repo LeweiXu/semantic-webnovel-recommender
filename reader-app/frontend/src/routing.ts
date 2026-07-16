@@ -1,8 +1,8 @@
 export type AppRoute =
   | { page: "discover"; q: string; category: string | null; similar: string | null; title: string }
   | { page: "library"; q: string }
-  | { page: "novel"; nid: string }
-  | { page: "reader"; nid: string; chapter: number | null; line: number | null };
+  | { page: "novel"; id: string }
+  | { page: "reader"; id: string; chapter: number | null; line: number | null };
 
 export const ROUTE_EVENT = "reader:navigate";
 
@@ -12,18 +12,27 @@ function nonNegativeInt(value: string | null): number | null {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+// A novel id is a readable "<category>/<stem>" slug (or a legacy base64 id).
+// Encode each path segment but keep the slash so the URL stays a real path.
+function encodeSlug(id: string): string {
+  return id.split("/").map(encodeURIComponent).join("/");
+}
+function decodeSlug(encoded: string): string {
+  return encoded.split("/").map(decodeURIComponent).join("/");
+}
+
 export function currentRoute(): AppRoute {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   const params = new URLSearchParams(window.location.search);
-  const novelMatch = path.match(/^\/novel\/([^/]+)$/);
+  const novelMatch = path.match(/^\/novel\/(.+)$/);
   if (novelMatch) {
-    return { page: "novel", nid: decodeURIComponent(novelMatch[1]) };
+    return { page: "novel", id: decodeSlug(novelMatch[1]) };
   }
-  const readerMatch = path.match(/^\/reader\/([^/]+)$/);
+  const readerMatch = path.match(/^\/reader\/(.+)$/);
   if (readerMatch) {
     return {
       page: "reader",
-      nid: decodeURIComponent(readerMatch[1]),
+      id: decodeSlug(readerMatch[1]),
       chapter: nonNegativeInt(params.get("chapter")),
       line: nonNegativeInt(params.get("line")),
     };
@@ -33,7 +42,7 @@ export function currentRoute(): AppRoute {
   if (legacyNid) {
     return {
       page: "reader",
-      nid: legacyNid,
+      id: legacyNid,
       chapter: nonNegativeInt(params.get("ch")),
       line: nonNegativeInt(params.get("line")),
     };
@@ -70,14 +79,14 @@ export function libraryPath(q = "") {
   return withParams("/library", { q });
 }
 
-export function novelPath(nid: string) {
-  return `/novel/${encodeURIComponent(nid)}`;
+export function novelPath(id: string) {
+  return `/novel/${encodeSlug(id)}`;
 }
 
 // The reader URL carries only the chapter. Intra-chapter line progress is kept
 // server-side (the reading bookmark), not exposed in the address bar.
-export function readerPath(nid: string, chapter?: number | null) {
-  return withParams(`/reader/${encodeURIComponent(nid)}`, { chapter });
+export function readerPath(id: string, chapter?: number | null) {
+  return withParams(`/reader/${encodeSlug(id)}`, { chapter });
 }
 
 export function navigate(path: string, replace = false) {

@@ -104,7 +104,8 @@ export const useReader = create<ReaderState>((set, get) => ({
       } else {
         startLine = location.line;
       }
-      if (updateUrl) writeUrl(readerPath(nid, start), updateUrl === "replace");
+      // Canonicalise to the readable slug, even if opened via a legacy/base64 id.
+      if (updateUrl) writeUrl(readerPath(novel.slug, start), updateUrl === "replace");
       set({
         novel,
         startPosition: start,
@@ -130,7 +131,7 @@ export const useReader = create<ReaderState>((set, get) => ({
     if (!novel) return null;
     if (chapters[idx]) return chapters[idx];
     try {
-      const content = await api.chapter(novel.nid, idx, annotate);
+      const content = await api.chapter(novel.slug, idx, annotate);
       set((s) => ({ chapters: { ...s.chapters, [idx]: content } }));
       return content;
     } catch {
@@ -155,7 +156,7 @@ export const useReader = create<ReaderState>((set, get) => ({
     if (!novel) return;
     set({ furthest: topChapter, current: topChapter });
     try {
-      await api.setProgress(novel.nid, topChapter, topLine, true);
+      await api.setProgress(novel.slug, topChapter, topLine, true);
     } catch {
       /* leave the local spine where we set it; a later scroll will re-sync */
     }
@@ -165,7 +166,7 @@ export const useReader = create<ReaderState>((set, get) => ({
   // ScrollReader watches jumpTarget, lands on the chapter, then clears it.
   goToChapter: (idx) =>
     set((s) => {
-      if (s.novel) writeUrl(readerPath(s.novel.nid, idx), false);
+      if (s.novel) writeUrl(readerPath(s.novel.slug, idx), false);
       return {
         jumpTarget: idx,
         current: idx,

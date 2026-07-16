@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 from recsys.store import NovelRecord, load_all
 from webnovel.library import Chapter, local_chapters, local_path, local_synopsis
@@ -28,6 +29,10 @@ _records_cache: dict[str, NovelRecord] | None = None
 _records_mtimes: tuple[tuple[str, int], ...] | None = None
 _records_lock = threading.Lock()
 
+# slug -> url, built alongside _records so downloaded novels can be addressed by
+# a readable "<category>/<file stem>" path in the frontend URL instead of a hash.
+_slug_cache: dict[str, str] | None = None
+
 
 @dataclass
 class ResolvedNovel:
@@ -38,7 +43,7 @@ class ResolvedNovel:
 
 
 def _records() -> dict[str, NovelRecord]:
-    global _records_cache, _records_mtimes
+    global _records_cache, _records_mtimes, _slug_cache
     with _records_lock:
         mtimes = tuple(
             sorted(
@@ -50,7 +55,33 @@ def _records() -> dict[str, NovelRecord]:
         if _records_cache is None or mtimes != _records_mtimes:
             _records_cache = load_all()
             _records_mtimes = mtimes
+            _slug_cache = None  # rebuilt lazily from the fresh records
         return _records_cache
+
+
+def slug_for(record: NovelRecord | None) -> str | None:
+    """A readable id for a downloaded novel: "<category>/<file stem>" (no .txt)."""
+    if record is None or not record.file:
+        return None
+    return f"{record.category}/{Path(record.file).stem}"
+
+
+def _slug_index() -> dict[str, str]:
+    global _slug_cache
+    records = _records()  # refreshes _slug_cache to None if the library changed
+    with _records_lock:
+        if _slug_cache is None:
+            index: dict[str, str] = {}
+            for url, record in records.items():
+                slug = slug_for(record)
+                if slug and slug not in index:  # first writer wins on a rare clash
+                    index[slug] = url
+            _slug_cache = index
+        return _slug_cache
+
+
+def url_for_slug(slug: str) -> str | None:
+    return _slug_index().get(slug)
 
 
 def record_for_url(url: str) -> NovelRecord | None:
@@ -87,10 +118,17 @@ def resolve(url: str) -> ResolvedNovel | None:
     return ResolvedNovel(url=url, record=record, chapters=chapters, synopsis=synopsis)
 
 
+def resolve_slug(slug: str) -> ResolvedNovel | None:
+    """Resolve a "<category>/<stem>" slug to a downloaded novel, or None."""
+    url = url_for_slug(slug)
+    return resolve(url) if url is not None else None
+
+
 def invalidate(url: str) -> None:
-    global _records_cache, _records_mtimes
+    global _records_cache, _records_mtimes, _slug_cache
     with _cache_lock:
         _chapter_cache.pop(url, None)
     with _records_lock:
         _records_cache = None  # a download added/changed a metadata record
         _records_mtimes = None
+        _slug_cache = None

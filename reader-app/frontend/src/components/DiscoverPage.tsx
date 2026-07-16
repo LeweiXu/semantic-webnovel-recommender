@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type MapData, type RecItem, type TagCount } from "../api/client";
+import { api, type MapData, type RecItem } from "../api/client";
 import { SemanticMap } from "./SemanticMap";
 import { RecCard } from "./RecCard";
 import { currentRoute, discoverPath, writeUrl } from "../routing";
@@ -11,6 +11,13 @@ type Action =
 
 const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
+
+// Suggested-search chips: the top tags of the demo corpus, hardcoded so they
+// render instantly instead of waiting on a /discover/tags round-trip.
+const DISCOVER_TAGS = [
+  "情有独钟", "甜文", "天作之合", "甜宠文", "轻松", "都市", "爽文", "破镜重圆",
+  "强强", "日常", "系统", "穿书", "先婚后爱", "年下", "校园", "豪门总裁",
+];
 
 export function DiscoverPage() {
   const initialRoute = currentRoute();
@@ -24,12 +31,10 @@ export function DiscoverPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [map, setMap] = useState<MapData | null>(null);
-  const [tags, setTags] = useState<TagCount[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     api.discoverMap().then(setMap).catch(() => {});
-    api.discoverTags(16).then(setTags).catch(() => {});
   }, []);
 
   const runQuery = (text: string, cat = category, updateRoute = true) => {
@@ -143,15 +148,13 @@ export function DiscoverPage() {
           ))}
         </div>
 
-        {tags.length > 0 && (
-          <div className="dsc-tags">
-            {tags.map((t) => (
-              <button key={t.tag} className="dsc-tagchip" onClick={() => { setInput(t.tag); runQuery(t.tag); }}>
-                {t.tag}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="dsc-tags">
+          {DISCOVER_TAGS.map((t) => (
+            <button key={t} className="dsc-tagchip" onClick={() => { setInput(t); runQuery(t); }}>
+              {t}
+            </button>
+          ))}
+        </div>
       </header>
 
       <div id="rec-results" className="dsc-body">
@@ -186,11 +189,9 @@ export function DiscoverPage() {
 
         <section className="dsc-map-panel">
           <div className="dsc-section-label">The semantic map</div>
-          {map ? (
-            <SemanticMap points={map.points} selected={selected} onSelect={onMapSelect} />
-          ) : (
-            <div className="dsc-note">Loading map…</div>
-          )}
+          {/* The map frame renders immediately; points fade in (dot-in) once the
+              backend responds, so the background never spawns in late. */}
+          <SemanticMap points={map?.points ?? []} selected={selected} onSelect={onMapSelect} />
           <p className="dsc-map-caption">
             Each point is a novel, placed by a 2-D PCA of its bge-m3 embedding.
             Closer points are more semantically alike; click one to explore its

@@ -21,6 +21,7 @@ from recsys.search import Filters, Result, SearchEngine
 from recsys.store import NovelRecord
 from webnovel.library import local_path
 
+import novels
 from ids import nid_decode, nid_encode
 
 DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
@@ -79,8 +80,10 @@ def _downloaded(rec: NovelRecord) -> bool:
 
 def _result_dict(res: Result) -> dict:
     rec = res.record
+    downloaded = _downloaded(rec)
     return {
         "nid": nid_encode(rec.url),
+        "slug": novels.slug_for(rec) if downloaded else None,
         "url": rec.url,
         "title": rec.title,
         "author": rec.author,
@@ -90,7 +93,7 @@ def _result_dict(res: Result) -> dict:
         "synopsis": (rec.synopsis or "")[:260],
         "cosine": round(res.cosine, 4),
         "similarity": max(0, min(100, round(res.cosine * 100))),
-        "downloaded": _downloaded(rec),
+        "downloaded": downloaded,
     }
 
 

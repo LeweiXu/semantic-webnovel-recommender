@@ -62,12 +62,12 @@ export default function App() {
         const location = route.chapter === null
           ? undefined
           : { chapter: route.chapter };
-        openNovel(route.nid, location, route.chapter === null ? "replace" : false);
-        const canonical = readerPath(route.nid, route.chapter);
+        openNovel(route.id, location, route.chapter === null ? "replace" : false);
+        const canonical = readerPath(route.id, route.chapter);
         if (`${window.location.pathname}${window.location.search}` !== canonical) writeUrl(canonical);
       } else if (route.page === "novel") {
         setView("novel");
-        const canonical = novelPath(route.nid);
+        const canonical = novelPath(route.id);
         if (window.location.pathname !== canonical) writeUrl(canonical);
       } else if (route.page === "library") {
         setView("library");
@@ -138,7 +138,7 @@ export default function App() {
                   mobile reader header hides the rest of the navigation. */}
               <button
                 className="topbar-title"
-                onClick={() => navigate(novelPath(novel.nid))}
+                onClick={() => navigate(novelPath(novel.slug))}
                 aria-label="Novel page"
               >
                 {novel.title}
@@ -199,7 +199,7 @@ export default function App() {
         <SettingsPanel />
       </aside>
 
-      <Footer />
+      {view !== "read" && <Footer />}
 
       {authOpen && <AuthPanel onClose={() => setAuthOpen(false)} />}
       {adminOpen && user?.username === "lingwei" && (

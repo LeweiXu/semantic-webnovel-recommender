@@ -110,6 +110,7 @@ def reading(username: str = Depends(current_user)) -> list[ReadingItem]:
         items.append(ReadingItem(
             url=url,
             nid=nid_encode(url),
+            slug=novels.slug_for(record),
             title=entry.get("title") or (record.title if record else url),
             author=record.author if record else "",
             category=record.category if record else "",
@@ -130,6 +131,7 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
         SearchItem(
             url=r.url,
             nid=nid_encode(r.url),
+            slug=novels.slug_for(r) if r.downloaded else None,
             title=r.title,
             author=r.author,
             category=r.category,
@@ -143,48 +145,25 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
 # ── Novel + chapters ─────────────────────────────────────────────────────────
 
 def _resolve_or_404(nid: str):
-    try:
-        url = nid_decode(nid)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Bad novel id")
-    resolved = novels.resolve(url)
+    # ``nid`` is the frontend id: either a readable "<category>/<stem>" slug or a
+    # legacy base64 url id. Slugs contain a "/", base64 ids never do — so only the
+    # single-segment form falls back to base64 decoding (keeps old links working).
+    resolved = novels.resolve_slug(nid)
+    if resolved is None and "/" not in nid:
+        try:
+            url = nid_decode(nid)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Bad novel id")
+        resolved = novels.resolve(url)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Novel not downloaded")
     return resolved
 
 
-@app.get("/api/novel/{nid}", response_model=NovelDetail)
-def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> NovelDetail:
-    resolved = _resolve_or_404(nid)
-    total = len(resolved.chapters)
-    entry = user_progress.get_entry(username, resolved.url) if username else {}
-    saved = int(entry.get("position", 0))
-    position = min(saved, max(total - 1, 0))
-    line = int(entry["line"]) if position == saved and entry.get("line") is not None else None
-    # Annotate the synopsis too (pinyin + clickable words). The client only shows
-    # it when the reader turns the synopsis-pinyin setting on; cache like chapters.
-    synopsis_tokens = _annotated_tokens(nid, -1, resolved.synopsis) if resolved.synopsis else []
-    return NovelDetail(
-        url=resolved.url,
-        nid=nid,
-        title=resolved.record.title,
-        author=resolved.record.author,
-        category=resolved.record.category,
-        tags=list(resolved.record.tags[:12]),
-        synopsis=resolved.synopsis,
-        synopsis_tokens=synopsis_tokens,
-        downloaded=True,
-        total=total,
-        position=position,
-        line=line,
-        chapters=[
-            ChapterStub(index=i, title=c.title)
-            for i, c in enumerate(resolved.chapters)
-        ],
-    )
-
-
-@app.get("/api/novel/{nid}/chapter/{idx}")
+# Chapter and progress are declared before the catch-all detail route below,
+# because the ``{nid:path}`` converter is greedy and would otherwise swallow the
+# ``/chapter/{idx}`` and ``/progress`` suffixes.
+@app.get("/api/novel/{nid:path}/chapter/{idx}")
 def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="annotate")) -> JSONResponse:
     resolved = _resolve_or_404(nid)
     total = len(resolved.chapters)
@@ -192,7 +171,7 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
         raise HTTPException(status_code=404, detail="Chapter out of range")
     ch = resolved.chapters[idx]
     if annotate_flag:
-        tokens = _annotated_tokens(nid, idx, ch.body)  # already [{t, py}] dicts
+        tokens = _annotated_tokens(resolved.url, idx, ch.body)  # already [{t, py}] dicts
     else:
         tokens = [{"t": ch.body, "py": None}]
     # Return the token dicts directly; validating 2k+ token models per chapter
@@ -207,7 +186,7 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
     })
 
 
-@app.post("/api/novel/{nid}/progress", response_model=ProgressOut)
+@app.post("/api/novel/{nid:path}/progress", response_model=ProgressOut)
 def set_progress(
     nid: str, body: ProgressIn, username: str = Depends(current_user)
 ) -> ProgressOut:
@@ -224,6 +203,38 @@ def set_progress(
         position=int(entry.get("position", 0)),
         line=int(entry["line"]) if entry.get("line") is not None else None,
         updated=entry.get("updated", ""),
+    )
+
+
+@app.get("/api/novel/{nid:path}", response_model=NovelDetail)
+def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> NovelDetail:
+    resolved = _resolve_or_404(nid)
+    total = len(resolved.chapters)
+    entry = user_progress.get_entry(username, resolved.url) if username else {}
+    saved = int(entry.get("position", 0))
+    position = min(saved, max(total - 1, 0))
+    line = int(entry["line"]) if position == saved and entry.get("line") is not None else None
+    # Annotate the synopsis too (pinyin + clickable words). The client only shows
+    # it when the reader turns the synopsis-pinyin setting on; cache like chapters.
+    synopsis_tokens = _annotated_tokens(resolved.url, -1, resolved.synopsis) if resolved.synopsis else []
+    return NovelDetail(
+        url=resolved.url,
+        nid=nid_encode(resolved.url),
+        slug=novels.slug_for(resolved.record) or nid_encode(resolved.url),
+        title=resolved.record.title,
+        author=resolved.record.author,
+        category=resolved.record.category,
+        tags=list(resolved.record.tags[:12]),
+        synopsis=resolved.synopsis,
+        synopsis_tokens=synopsis_tokens,
+        downloaded=True,
+        total=total,
+        position=position,
+        line=line,
+        chapters=[
+            ChapterStub(index=i, title=c.title)
+            for i, c in enumerate(resolved.chapters)
+        ],
     )
 
 

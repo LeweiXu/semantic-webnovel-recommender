@@ -28,6 +28,7 @@ class TokenOut(BaseModel):
 class ReadingItem(BaseModel):
     url: str
     nid: str
+    slug: str | None = None
     title: str
     author: str = ""
     category: str = ""
@@ -42,6 +43,7 @@ class ReadingItem(BaseModel):
 class SearchItem(BaseModel):
     url: str
     nid: str
+    slug: str | None = None
     title: str
     author: str = ""
     category: str = ""
@@ -62,6 +64,7 @@ class Token(BaseModel):
 class NovelDetail(BaseModel):
     url: str
     nid: str
+    slug: str
     title: str
     author: str = ""
     category: str = ""

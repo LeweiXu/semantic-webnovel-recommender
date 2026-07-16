@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, setApiAuthToken, type User } from "../api/client";
 
 const TOKEN_KEY = "reader:auth-token";
+const USER_KEY = "reader:auth-user";
 
 function storedToken(): string | null {
   try {
@@ -11,7 +12,29 @@ function storedToken(): string | null {
   }
 }
 
+function storedUser(): User | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistUser(user: User | null) {
+  try {
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_KEY);
+  } catch {
+    /* storage denial shouldn't break auth */
+  }
+}
+
 const initialToken = storedToken();
+// Restore the last-known user synchronously so the UI doesn't flash a
+// logged-out state on reload while /me is still in flight. restore() then
+// validates the token and corrects this if it's stale.
+const initialUser = initialToken ? storedUser() : null;
 setApiAuthToken(initialToken);
 
 interface AuthState {
@@ -36,7 +59,7 @@ function persistToken(token: string | null) {
 
 export const useAuth = create<AuthState>((set) => ({
   token: initialToken,
-  user: null,
+  user: initialUser,
   ready: !initialToken,
 
   restore: async () => {
@@ -46,9 +69,11 @@ export const useAuth = create<AuthState>((set) => ({
     }
     try {
       const user = await api.me();
+      persistUser(user);
       set({ user, ready: true });
     } catch {
       persistToken(null);
+      persistUser(null);
       set({ token: null, user: null, ready: true });
     }
   },
@@ -56,17 +81,20 @@ export const useAuth = create<AuthState>((set) => ({
   login: async (username, password) => {
     const result = await api.login(username, password);
     persistToken(result.access_token);
+    persistUser(result.user);
     set({ token: result.access_token, user: result.user, ready: true });
   },
 
   register: async (username, password) => {
     const result = await api.register(username, password);
     persistToken(result.access_token);
+    persistUser(result.user);
     set({ token: result.access_token, user: result.user, ready: true });
   },
 
   logout: () => {
     persistToken(null);
+    persistUser(null);
     set({ token: null, user: null, ready: true });
   },
 }));

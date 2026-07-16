@@ -22,7 +22,7 @@ export function DownloadDialog({ url, onDone }: Props) {
         } else if (event === "done") {
           setLines((prev) => [...prev, `Saved ${data.title} (${data.chapters} chapters)`]);
           setStatus("idle");
-          onDone(data.nid);
+          onDone(data.slug || data.nid);
         } else if (event === "error") {
           setLines((prev) => [...prev, data.message]);
           setStatus("error");

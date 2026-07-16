@@ -78,7 +78,7 @@ export function RecCard({ rec, delay, onSimilar, onTag }: Props) {
           ✦ Similar
         </button>
         {downloaded ? (
-          <button className="rec-btn primary" onClick={() => openNovel(rec.nid)}>
+          <button className="rec-btn primary" onClick={() => openNovel(rec.slug ?? rec.nid)}>
             Read
           </button>
         ) : (

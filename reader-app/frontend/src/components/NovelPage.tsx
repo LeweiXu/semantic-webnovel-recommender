@@ -15,7 +15,7 @@ const SYNOPSIS_CAP = 250;
 // does NOT follow the reader's per-user font/pinyin settings.
 export function NovelPage() {
   const route = currentRoute();
-  const nid = route.page === "novel" ? route.nid : "";
+  const id = route.page === "novel" ? route.id : "";
   const openNovel = useReader((s) => s.openNovel);
 
   const [novel, setNovel] = useState<NovelDetail | null>(null);
@@ -23,18 +23,18 @@ export function NovelPage() {
   const [synopsisOpen, setSynopsisOpen] = useState(false);
 
   useEffect(() => {
-    if (!nid) return;
+    if (!id) return;
     let alive = true;
     setNovel(null);
     setError(null);
     api
-      .novel(nid)
+      .novel(id)
       .then((n) => alive && setNovel(n))
       .catch((e) => alive && setError(e?.message ?? "Could not open novel"));
     return () => {
       alive = false;
     };
-  }, [nid]);
+  }, [id]);
 
   if (error) return <div className="stage-note">{error}</div>;
   if (!novel) return <div className="stage-note">Opening…</div>;
@@ -62,7 +62,7 @@ export function NovelPage() {
               ))}
             </div>
           )}
-          <button className="btn-seal novel-page-read" onClick={() => openNovel(novel.nid)}>
+          <button className="btn-seal novel-page-read" onClick={() => openNovel(novel.slug)}>
             {resumeLabel}
           </button>
         </header>
@@ -86,7 +86,7 @@ export function NovelPage() {
               <li key={c.index}>
                 <button
                   className="toc-row"
-                  onClick={() => openNovel(novel.nid, { chapter: c.index, line: null })}
+                  onClick={() => openNovel(novel.slug, { chapter: c.index, line: null })}
                 >
                   <span className="toc-ord">{String(c.index + 1).padStart(2, "0")}</span>
                   <span className="toc-title">{c.title}</span>

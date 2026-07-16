@@ -401,7 +401,7 @@ button {
   transition: background 0.12s var(--ease);
 }
 .word:hover {
-  background: var(--seal-soft);
+  background: var(--word-hover);
 }
 ruby {
   ruby-align: center;

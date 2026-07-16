@@ -118,7 +118,7 @@ export function ScrollReader() {
   const landing = useRef(false);
 
   // Persist the exact top-of-page position (chapter + paragraph) as we read.
-  useReadingProgress(novel.nid, topChapter, topLine);
+  useReadingProgress(novel.slug, topChapter, topLine);
 
   const onWord = (word: string, el: HTMLElement) =>
     setPopup({ word, rect: el.getBoundingClientRect() });
@@ -228,7 +228,7 @@ export function ScrollReader() {
       const topEl = sections.current.get(topC);
       if (topEl) topL = lineAtViewportTop(topEl, root);
       setTop(topC, topL);
-      writeUrl(readerPath(novel.nid, topC), true);
+      writeUrl(readerPath(novel.slug, topC), true);
 
       const lo = loaded[0];
       const hi = loaded[loaded.length - 1];

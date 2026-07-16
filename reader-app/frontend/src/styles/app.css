@@ -99,7 +99,13 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 60vw;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.2s var(--ease);
 }
+.topbar-title:hover { color: var(--accent); }
 .topbar-sub {
   font-size: 0.66rem;
   letter-spacing: 0.06em;
@@ -139,6 +145,7 @@ button {
 .icon-btn:focus-visible,
 .btn-seal:focus-visible,
 .novel-row:focus-visible,
+.topbar-title:focus-visible,
 .word:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -268,6 +275,80 @@ button {
   letter-spacing: var(--reading-tracking);
   white-space: pre-wrap;
   font-size: calc(var(--reading-size) * 0.92);
+}
+
+/* ── Novel landing page (title / tags / synopsis / chapters) ─────────────────
+   Statically designed to match the Discover/Library pages (UI font, fixed
+   sizes). It does NOT use the reader's per-user typography settings. Desktop
+   takes two-thirds of the width, centered; mobile widens it (responsive.css). */
+.novel-page {
+  width: 66.6667%;
+  margin: 0 auto;
+  padding: 32px 0 30vh;
+}
+.novel-page-hero {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 24px;
+}
+.novel-page-title {
+  font-family: var(--font-reading);
+  font-size: 1.9rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--ink);
+}
+.novel-page-byline {
+  color: var(--muted);
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+}
+.novel-page-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.novel-page-read {
+  margin-top: 20px;
+}
+.novel-page-section {
+  margin-top: 28px;
+}
+.novel-synopsis {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.synopsis-toggle {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.synopsis-toggle:hover { text-decoration: underline; }
+.synopsis-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Chapters as a horizontally-ordered 3-column grid on desktop. */
+.novel-page-toc {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px 14px;
+}
+.novel-page-toc .toc-row { min-width: 0; }
+.novel-page-toc .toc-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chapter-slot {

@@ -170,6 +170,7 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         title=resolved.record.title,
         author=resolved.record.author,
         category=resolved.record.category,
+        tags=list(resolved.record.tags[:12]),
         synopsis=resolved.synopsis,
         synopsis_tokens=synopsis_tokens,
         downloaded=True,

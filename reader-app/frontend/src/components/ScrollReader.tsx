@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useReader } from "../store/reader";
-import { useSettings } from "../store/settings";
+import { useActiveSettings } from "../store/settings";
 import { useReadingProgress } from "../hooks/useProgress";
 import { Chapter, splitParagraphs } from "./Chapter";
 import { RubyText } from "./RubyText";
@@ -91,8 +91,9 @@ export function ScrollReader() {
   const topLine = useReader((s) => s.topLine);
   const jumpTarget = useReader((s) => s.jumpTarget);
   const clearJump = useReader((s) => s.clearJump);
-  const pinyin = useSettings((s) => s.pinyin);
-  const synopsisPinyin = useSettings((s) => s.synopsisPinyin);
+  const active = useActiveSettings();
+  const pinyin = active.pinyin;
+  const synopsisPinyin = active.synopsisPinyin;
 
   const total = novel.total;
 
@@ -227,7 +228,7 @@ export function ScrollReader() {
       const topEl = sections.current.get(topC);
       if (topEl) topL = lineAtViewportTop(topEl, root);
       setTop(topC, topL);
-      writeUrl(readerPath(novel.nid, topC, topL), true);
+      writeUrl(readerPath(novel.nid, topC), true);
 
       const lo = loaded[0];
       const hi = loaded[loaded.length - 1];

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReadingItem, type SearchItem } from "../api/client";
-import { useReader } from "../store/reader";
 import { useAuth } from "../store/auth";
 import { DownloadDialog } from "./DownloadDialog";
-import { currentRoute, libraryPath, writeUrl } from "../routing";
+import { currentRoute, libraryPath, navigate, novelPath, writeUrl } from "../routing";
 
 const isNovelUrl = (s: string) =>
   /^https?:\/\/(www\.)?52shuku\.net\/[^/]+\/.+\.html$/i.test(s.trim());
@@ -17,7 +16,6 @@ function pct(position: number, total: number | null): number {
 }
 
 export function LibraryPage() {
-  const openNovel = useReader((s) => s.openNovel);
   const user = useAuth((s) => s.user);
 
   const [reading, setReading] = useState<ReadingItem[]>([]);
@@ -91,7 +89,7 @@ export function LibraryPage() {
               setQuery("");
               writeUrl(libraryPath());
               refreshReading();
-              openNovel(nid);
+              navigate(novelPath(nid));
             }}
           />
         </div>
@@ -111,7 +109,7 @@ export function LibraryPage() {
                 <button
                   className="lib-result-main"
                   disabled={!r.downloaded}
-                  onClick={() => r.downloaded && openNovel(r.nid)}
+                  onClick={() => r.downloaded && navigate(novelPath(r.nid))}
                   title={r.downloaded ? "" : "Not downloaded yet"}
                 >
                   <span className="lib-result-title">{r.title}</span>
@@ -143,7 +141,7 @@ export function LibraryPage() {
                 setQuery("");
                 writeUrl(libraryPath());
                 refreshReading();
-                openNovel(nid);
+                navigate(novelPath(nid));
               }}
             />
           )}
@@ -165,7 +163,7 @@ export function LibraryPage() {
                 <button
                   key={r.nid}
                   className="lib-card"
-                  onClick={() => openNovel(r.nid, { chapter: r.position, line: r.line })}
+                  onClick={() => navigate(novelPath(r.nid))}
                 >
                   <div className="lib-card-head">
                     <h3 className="lib-card-title">{r.title}</h3>

@@ -1,0 +1,28 @@
+/* Mobile / tablet overrides.
+ *
+ * The breakpoint here (max-width: 1024px) must match MOBILE_MAX_WIDTH in
+ * hooks/useIsMobile.ts — that hook drives the JS-side mobile behaviour (stripped
+ * reader header, the active settings profile), and these rules cover the
+ * purely-visual mobile changes. Keep the two values in sync.
+ */
+
+@media (max-width: 1024px) {
+  /* No footer on mobile, anywhere. */
+  .site-footer {
+    display: none;
+  }
+
+  /* Library cards drop the synopsis to stay compact on small screens. */
+  .lib-card-synopsis {
+    display: none;
+  }
+
+  /* Novel page: full width with side padding, single-column chapter list. */
+  .novel-page {
+    width: auto;
+    padding: 24px 18px 30vh;
+  }
+  .novel-page-toc {
+    grid-template-columns: 1fr;
+  }
+}

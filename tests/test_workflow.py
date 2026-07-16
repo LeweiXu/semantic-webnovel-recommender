@@ -294,15 +294,53 @@ class UserProgressTests(unittest.TestCase):
 
 
 class UserSettingsTests(unittest.TestCase):
-    def test_contrast_is_persisted_and_unknown_keys_are_discarded(self) -> None:
+    def test_per_profile_settings_and_unknown_keys_are_discarded(self) -> None:
         import user_settings
 
         with tempfile.TemporaryDirectory() as directory, patch.object(
             user_settings, "SETTINGS_DIR", Path(directory)
         ):
-            saved = user_settings.put("alice", {"contrast": 125, "unknown": "value"})
-            self.assertEqual(saved, {"contrast": 125})
-            self.assertEqual(user_settings.get("alice"), {"contrast": 125})
+            saved = user_settings.put(
+                "alice",
+                {
+                    "desktop": {"contrast": 125, "unknown": "value"},
+                    "mobile": {"fontSize": 18},
+                },
+            )
+            self.assertEqual(
+                saved, {"desktop": {"contrast": 125}, "mobile": {"fontSize": 18}}
+            )
+            self.assertEqual(
+                user_settings.get("alice"),
+                {"desktop": {"contrast": 125}, "mobile": {"fontSize": 18}},
+            )
+
+    def test_partial_put_leaves_the_other_profile_untouched(self) -> None:
+        import user_settings
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_settings, "SETTINGS_DIR", Path(directory)
+        ):
+            user_settings.put("bob", {"desktop": {"theme": "night"}})
+            user_settings.put("bob", {"mobile": {"theme": "paper"}})
+            self.assertEqual(
+                user_settings.get("bob"),
+                {"desktop": {"theme": "night"}, "mobile": {"theme": "paper"}},
+            )
+
+    def test_legacy_flat_file_is_read_as_the_desktop_profile(self) -> None:
+        import user_settings
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_settings, "SETTINGS_DIR", Path(directory)
+        ):
+            (Path(directory) / "carol.json").write_text(
+                '{"contrast": 110, "unknown": "x"}', encoding="utf-8"
+            )
+            self.assertEqual(
+                user_settings.get("carol"),
+                {"desktop": {"contrast": 110}, "mobile": {}},
+            )
 
 
 class TtsTests(unittest.TestCase):

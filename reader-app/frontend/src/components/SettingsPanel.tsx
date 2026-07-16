@@ -1,4 +1,4 @@
-import { useSettings, type Theme, type ReadingMode } from "../store/settings";
+import { useSettings, useActiveSettings, type Theme, type ReadingMode } from "../store/settings";
 import { useReader } from "../store/reader";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -9,9 +9,10 @@ const THEMES: { id: Theme; label: string }[] = [
 ];
 
 export function SettingsPanel() {
-  const s = useSettings();
+  const s = useActiveSettings();
+  const set = useSettings((st) => st.set);
+  const reset = useSettings((st) => st.reset);
   const novel = useReader((st) => st.novel);
-  const topChapter = useReader((st) => st.topChapter);
   const resetProgress = useReader((st) => st.resetProgressToCurrent);
 
   return (
@@ -26,7 +27,7 @@ export function SettingsPanel() {
           className={`toggle${s.pinyin ? " is-on" : ""}`}
           role="switch"
           aria-checked={s.pinyin}
-          onClick={() => s.set({ pinyin: !s.pinyin })}
+          onClick={() => set({ pinyin: !s.pinyin })}
         >
           <span className="toggle-knob" />
         </button>
@@ -38,7 +39,7 @@ export function SettingsPanel() {
           className={`toggle${s.synopsisPinyin ? " is-on" : ""}`}
           role="switch"
           aria-checked={s.synopsisPinyin}
-          onClick={() => s.set({ synopsisPinyin: !s.synopsisPinyin })}
+          onClick={() => set({ synopsisPinyin: !s.synopsisPinyin })}
         >
           <span className="toggle-knob" />
         </button>
@@ -51,7 +52,7 @@ export function SettingsPanel() {
             <button
               key={t.id}
               className={`segment${s.theme === t.id ? " is-on" : ""}`}
-              onClick={() => s.set({ theme: t.id })}
+              onClick={() => set({ theme: t.id })}
             >
               {t.label}
             </button>
@@ -69,7 +70,7 @@ export function SettingsPanel() {
           max={30}
           step={1}
           value={s.fontSize}
-          onChange={(e) => s.set({ fontSize: Number(e.target.value) })}
+          onChange={(e) => set({ fontSize: Number(e.target.value) })}
         />
       </div>
 
@@ -79,11 +80,11 @@ export function SettingsPanel() {
         </label>
         <input
           type="range"
-          min={1.6}
-          max={2.6}
+          min={1.0}
+          max={3.0}
           step={0.05}
           value={s.leading}
-          onChange={(e) => s.set({ leading: Number(e.target.value) })}
+          onChange={(e) => set({ leading: Number(e.target.value) })}
         />
       </div>
 
@@ -97,7 +98,7 @@ export function SettingsPanel() {
           max={0.3}
           step={0.01}
           value={s.tracking}
-          onChange={(e) => s.set({ tracking: Number(e.target.value) })}
+          onChange={(e) => set({ tracking: Number(e.target.value) })}
         />
       </div>
 
@@ -111,7 +112,7 @@ export function SettingsPanel() {
           max={100}
           step={1}
           value={s.measure}
-          onChange={(e) => s.set({ measure: Number(e.target.value) })}
+          onChange={(e) => set({ measure: Number(e.target.value) })}
         />
       </div>
 
@@ -125,7 +126,7 @@ export function SettingsPanel() {
           max={150}
           step={5}
           value={s.contrast}
-          onChange={(e) => s.set({ contrast: Number(e.target.value) })}
+          onChange={(e) => set({ contrast: Number(e.target.value) })}
           aria-label="Text and background contrast"
         />
       </div>
@@ -139,7 +140,7 @@ export function SettingsPanel() {
               className={`segment${s.mode === m ? " is-on" : ""}`}
               disabled={m === "paginate"}
               title={m === "paginate" ? "Coming soon" : ""}
-              onClick={() => s.set({ mode: m })}
+              onClick={() => set({ mode: m })}
             >
               {m === "scroll" ? "Scroll" : "Paginate"}
               {m === "paginate" && <em className="soon">soon</em>}
@@ -148,16 +149,18 @@ export function SettingsPanel() {
         </div>
       </div>
 
+      <div className="setting setting-block">
+        <button className="btn-outline" onClick={() => reset()}>
+          Reset to defaults
+        </button>
+      </div>
+
       {novel && (
         <div className="setting setting-block">
           <label className="setting-label">Progress</label>
           <button className="btn-outline" onClick={() => resetProgress()}>
-            Reset progress to here (ch {topChapter + 1})
+            Reset Progress To Current
           </button>
-          <p className="setting-hint">
-            Moves your saved place back to the top of the current page — handy after
-            an accidental jump to a later chapter.
-          </p>
         </div>
       )}
     </div>

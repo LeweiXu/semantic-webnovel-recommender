@@ -65,6 +65,7 @@ class NovelDetail(BaseModel):
     title: str
     author: str = ""
     category: str = ""
+    tags: list[str] = []
     synopsis: str = ""
     synopsis_tokens: list[Token] = []
     downloaded: bool = True

@@ -24,15 +24,16 @@ interface ReaderState {
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
 
   // "discover" = the recommender landing page; "library" = the reading shelf;
+  // "novel" = a novel's landing page (tags, synopsis, chapter list);
   // "read" = the open novel.
-  view: "discover" | "read" | "library";
+  view: "discover" | "read" | "library" | "novel";
 
   leftOpen: boolean;
   rightOpen: boolean;
   tocOpen: boolean;
   chromeVisible: boolean;
 
-  setView: (v: "discover" | "read" | "library") => void;
+  setView: (v: "discover" | "read" | "library" | "novel") => void;
   openNovel: (
     nid: string,
     location?: OpenLocation,
@@ -90,10 +91,20 @@ export const useReader = create<ReaderState>((set, get) => ({
       const novel = await api.novel(nid);
       if (request !== openSequence) return;
       const start = Math.min(location?.chapter ?? novel.position ?? 0, Math.max(novel.total - 1, 0));
-      // An explicit chapter with no line is a deliberate page-top open. With no
-      // explicit location, resume the account's fine-grained bookmark.
-      const startLine = location === undefined ? novel.line : location.line ?? null;
-      if (updateUrl) writeUrl(readerPath(nid, start, startLine), updateUrl === "replace");
+      // Resolve where to land vertically within the chapter:
+      //  - no location at all: resume the account's fine-grained bookmark.
+      //  - a chapter but no `line` field (e.g. a reader URL on reload): restore the
+      //    saved line if we're opening the bookmarked chapter, else the top.
+      //  - an explicit `line` (null = page top, or a saved body line): use it.
+      let startLine: number | null;
+      if (location === undefined) {
+        startLine = novel.line;
+      } else if (location.line === undefined) {
+        startLine = start === (novel.position ?? 0) ? novel.line : null;
+      } else {
+        startLine = location.line;
+      }
+      if (updateUrl) writeUrl(readerPath(nid, start), updateUrl === "replace");
       set({
         novel,
         startPosition: start,
@@ -154,7 +165,7 @@ export const useReader = create<ReaderState>((set, get) => ({
   // ScrollReader watches jumpTarget, lands on the chapter, then clears it.
   goToChapter: (idx) =>
     set((s) => {
-      if (s.novel) writeUrl(readerPath(s.novel.nid, idx, null), false);
+      if (s.novel) writeUrl(readerPath(s.novel.nid, idx), false);
       return {
         jumpTarget: idx,
         current: idx,

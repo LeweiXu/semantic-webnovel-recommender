@@ -57,6 +57,7 @@ export interface NovelDetail {
   title: string;
   author: string;
   category: string;
+  tags: string[];
   synopsis: string;
   synopsis_tokens: Token[];
   downloaded: boolean;

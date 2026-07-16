@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { useReader } from "./store/reader";
-import { useSettings, applySettings } from "./store/settings";
+import { useSettings, useActiveSettings, applySettings } from "./store/settings";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { useIsMobile } from "./hooks/useIsMobile";
 import { useAuth } from "./store/auth";
 import { AdminPanel } from "./components/AdminPanel";
 import { AuthPanel } from "./components/AuthPanel";
 import { LibraryPage } from "./components/LibraryPage";
+import { NovelPage } from "./components/NovelPage";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TocPanel } from "./components/TocPanel";
 import { ScrollReader } from "./components/ScrollReader";
@@ -17,12 +19,15 @@ import {
   discoverPath,
   libraryPath,
   navigate,
+  novelPath,
   readerPath,
   writeUrl,
 } from "./routing";
 
 export default function App() {
-  const settings = useSettings();
+  const activeSettings = useActiveSettings();
+  const setProfile = useSettings((s) => s.setProfile);
+  const isMobile = useIsMobile();
   const user = useAuth((s) => s.user);
   const restoreAuth = useAuth((s) => s.restore);
   const [authOpen, setAuthOpen] = useState(false);
@@ -41,7 +46,9 @@ export default function App() {
   const openNovel = useReader((s) => s.openNovel);
   const chromeVisible = useReader((s) => s.chromeVisible);
 
-  useEffect(() => applySettings(settings), [settings]);
+  // The viewport decides which settings profile is active (desktop vs mobile).
+  useEffect(() => setProfile(isMobile ? "mobile" : "desktop"), [isMobile, setProfile]);
+  useEffect(() => applySettings(activeSettings), [activeSettings]);
   useEffect(() => { restoreAuth(); }, [restoreAuth]);
   useSettingsSync();
 
@@ -49,12 +56,19 @@ export default function App() {
     const syncRoute = () => {
       const route = currentRoute();
       if (route.page === "reader") {
+        // The URL carries only the chapter (line lives in the server bookmark).
+        // Passing no line lets openNovel restore the exact saved line when this
+        // chapter is the bookmarked one, and land on the chapter top otherwise.
         const location = route.chapter === null
           ? undefined
-          : { chapter: route.chapter, line: route.line };
+          : { chapter: route.chapter };
         openNovel(route.nid, location, route.chapter === null ? "replace" : false);
-        const canonical = readerPath(route.nid, route.chapter, route.line);
+        const canonical = readerPath(route.nid, route.chapter);
         if (`${window.location.pathname}${window.location.search}` !== canonical) writeUrl(canonical);
+      } else if (route.page === "novel") {
+        setView("novel");
+        const canonical = novelPath(route.nid);
+        if (window.location.pathname !== canonical) writeUrl(canonical);
       } else if (route.page === "library") {
         setView("library");
       } else {
@@ -74,6 +88,9 @@ export default function App() {
 
   const total = novel?.total ?? 0;
   const spinePct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
+  // The stripped-down header (Contents + Settings only) applies to the reader on
+  // mobile/tablet. The novel page keeps the full header so there's a way out.
+  const mobileReader = isMobile && view === "read";
 
   return (
     <div className={`app${view === "read" && !chromeVisible ? " chrome-hidden" : ""}`}>
@@ -84,20 +101,26 @@ export default function App() {
 
       <header className="topbar">
         <div className="topbar-side">
-          <button
-            className={`icon-btn${view === "library" ? " is-active" : ""}`}
-            onClick={() => navigate(libraryPath())}
-            aria-label="Library"
-          >
-            <span className="seal-glyph small" aria-hidden>读</span>
-          </button>
-          <button
-            className={`icon-btn${view === "discover" ? " is-active" : ""}`}
-            onClick={() => navigate(discoverPath())}
-            aria-label="Discover"
-          >
-            <CompassIcon />
-          </button>
+          {/* In the mobile reader, the left cluster is just Contents. Everywhere
+              else (and on desktop) show the full navigation. */}
+          {!mobileReader && (
+            <>
+              <button
+                className={`icon-btn${view === "library" ? " is-active" : ""}`}
+                onClick={() => navigate(libraryPath())}
+                aria-label="Library"
+              >
+                <span className="seal-glyph small" aria-hidden>读</span>
+              </button>
+              <button
+                className={`icon-btn${view === "discover" ? " is-active" : ""}`}
+                onClick={() => navigate(discoverPath())}
+                aria-label="Discover"
+              >
+                <CompassIcon />
+              </button>
+            </>
+          )}
           {novel && view === "read" && (
             <button
               className="icon-btn"
@@ -111,8 +134,16 @@ export default function App() {
         <div className="topbar-center">
           {novel && view === "read" && (
             <>
-              <span className="topbar-title">{novel.title}</span>
-              {total > 0 && (
+              {/* Tapping the title opens the novel page — the exit route when the
+                  mobile reader header hides the rest of the navigation. */}
+              <button
+                className="topbar-title"
+                onClick={() => navigate(novelPath(novel.nid))}
+                aria-label="Novel page"
+              >
+                {novel.title}
+              </button>
+              {total > 0 && !mobileReader && (
                 <span className="topbar-sub">
                   {Math.round(spinePct)}% · {furthest + 1}/{total}
                 </span>
@@ -121,14 +152,17 @@ export default function App() {
           )}
         </div>
         <div className="topbar-side topbar-side-right">
-          {user?.username === "lingwei" && (
+          {/* In the mobile reader, the right cluster is just Settings. */}
+          {!mobileReader && user?.username === "lingwei" && (
             <button className="icon-btn" onClick={() => setAdminOpen(true)} aria-label="Admin jobs">
               <span className="account-glyph" aria-hidden>管</span>
             </button>
           )}
-          <button className="account-btn" onClick={() => setAuthOpen(true)} aria-label="Account">
-            {user?.username ?? "Log in"}
-          </button>
+          {!mobileReader && (
+            <button className="account-btn" onClick={() => setAuthOpen(true)} aria-label="Account">
+              {user?.username ?? "Log in"}
+            </button>
+          )}
           <button className="icon-btn" onClick={() => toggleRight()} aria-label="Settings">
             <GearIcon />
           </button>
@@ -140,6 +174,8 @@ export default function App() {
           <DiscoverPage key={routeKey} />
         ) : view === "library" ? (
           <LibraryPage key={routeKey} />
+        ) : view === "novel" ? (
+          <NovelPage key={routeKey} />
         ) : loading ? (
           <div className="stage-note">Opening…</div>
         ) : error ? (

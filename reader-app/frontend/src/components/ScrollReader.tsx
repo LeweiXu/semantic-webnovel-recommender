@@ -19,6 +19,10 @@ const LOOKAHEAD_VH = 1.5;
 // How far a passed chapter must clear the top of the viewport before it is
 // unmounted — a margin so the reflow is never visible.
 const DROP_MARGIN_VH = 0.25;
+// The reader header floats over the top of the scroll column (see
+// `.app.reading .scroll-root` padding-top). Anchor the reading line just below
+// it, so the exact-resume bookmark lands your line in view, not under the bar.
+const READING_TOP_INSET = 56;
 
 function relativeTop(el: HTMLElement, root: HTMLElement): number {
   return el.getBoundingClientRect().top - root.getBoundingClientRect().top;
@@ -39,7 +43,7 @@ function renderedLineCount(paragraph: HTMLElement): number {
 // started, wrapped visual lines are numbered from zero across the chapter.
 function lineAtViewportTop(section: HTMLElement, root: HTMLElement): number | null {
   const paragraphs = section.querySelectorAll<HTMLElement>(".chapter-body > p");
-  const viewportTop = root.getBoundingClientRect().top + 1;
+  const viewportTop = root.getBoundingClientRect().top + READING_TOP_INSET + 1;
   let linesBefore = 0;
 
   for (const paragraph of paragraphs) {
@@ -68,12 +72,13 @@ function scrollTopForLine(section: HTMLElement, root: HTMLElement, line: number)
     const count = renderedLineCount(paragraph);
     const lineHeight = renderedLineHeight(paragraph);
     if (remaining < count) {
-      return root.scrollTop + relativeTop(paragraph, root) + remaining * lineHeight;
+      const top = root.scrollTop + relativeTop(paragraph, root) + remaining * lineHeight;
+      return Math.max(0, top - READING_TOP_INSET);
     }
     lastOffset = root.scrollTop + relativeTop(paragraph, root) + (count - 1) * lineHeight;
     remaining -= count;
   }
-  return lastOffset;
+  return Math.max(0, lastOffset - READING_TOP_INSET);
 }
 
 export function ScrollReader() {

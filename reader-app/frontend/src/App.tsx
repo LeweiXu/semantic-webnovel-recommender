@@ -93,7 +93,7 @@ export default function App() {
   const mobileReader = isMobile && view === "read";
 
   return (
-    <div className={`app${view === "read" && !chromeVisible ? " chrome-hidden" : ""}`}>
+    <div className={`app${view === "read" ? " reading" : ""}${view === "read" && !chromeVisible ? " chrome-hidden" : ""}`}>
       {/* Progress gutter — the spine of the bound book, filling cinnabar as you read. */}
       <div className="spine" aria-hidden>
         <div className="spine-fill" style={{ height: `${spinePct}%` }} />
@@ -199,7 +199,7 @@ export default function App() {
         <SettingsPanel />
       </aside>
 
-      {view !== "read" && <Footer />}
+      {view === "discover" && <Footer />}
 
       {authOpen && <AuthPanel onClose={() => setAuthOpen(false)} />}
       {adminOpen && user?.username === "lingwei" && (

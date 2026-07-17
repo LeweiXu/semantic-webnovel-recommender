@@ -16,8 +16,14 @@ body,
   margin: 0;
 }
 
+html,
 body {
+  /* Paint the theme colour behind everything so any area a mobile browser
+     reveals while collapsing its toolbars never flashes as a bare (black) bar. */
   background: var(--bg);
+}
+
+body {
   color: var(--ink);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -30,7 +36,13 @@ button {
 }
 
 .app {
-  height: 100%;
+  /* dvh tracks the *visible* viewport, shrinking/growing with the mobile
+     browser's toolbars, so the reading area always fills the screen exactly
+     (no leftover gap, no content hidden behind a toolbar). 100vh is the
+     fallback for the rare browser without dvh. */
+  height: 100vh;
+  height: 100dvh;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -69,12 +81,24 @@ button {
   z-index: 4;
   transition:
     transform 0.24s var(--ease),
-    margin-bottom 0.24s var(--ease),
     background 0.4s var(--ease);
 }
-.app.chrome-hidden .topbar {
-  margin-bottom: -56px;
-  transform: translateY(-56px);
+/* In the reader the header floats over the scrolling text instead of taking a
+   flex row. Hiding it is then a pure transform (compositor only) — no height/
+   margin animation, so the scroll never reflows or stutters. The scroll column
+   gets matching top padding so the first line clears the header when it's up. */
+.app.reading .topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.app.reading .scroll-root {
+  padding-top: 56px;
+}
+.app.reading.chrome-hidden .topbar {
+  transform: translateY(-100%);
 }
 .topbar-side {
   display: flex;
@@ -1550,9 +1574,7 @@ input[type="range"]::-moz-range-thumb {
   backdrop-filter: saturate(1.1) blur(8px);
   color: var(--muted);
   font-size: 0.8rem;
-  transition: transform 0.24s var(--ease);
 }
-.app.chrome-hidden .site-footer { transform: translateY(105%); }
 .site-gh {
   min-width: 0;
   overflow: hidden;

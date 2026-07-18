@@ -14,6 +14,9 @@ export function SettingsPanel() {
   const reset = useSettings((st) => st.reset);
   const novel = useReader((st) => st.novel);
   const resetProgress = useReader((st) => st.resetProgressToCurrent);
+  // Pinyin controls are meaningless for an English novel — hide them while one
+  // is open. They stay visible everywhere else (and for Chinese novels).
+  const showPinyin = novel?.language !== "en";
 
   return (
     <div className="panel">
@@ -21,29 +24,33 @@ export function SettingsPanel() {
         <h2 className="panel-title">Reading</h2>
       </div>
 
-      <div className="setting">
-        <label className="setting-label">Pinyin</label>
-        <button
-          className={`toggle${s.pinyin ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={s.pinyin}
-          onClick={() => set({ pinyin: !s.pinyin })}
-        >
-          <span className="toggle-knob" />
-        </button>
-      </div>
+      {showPinyin && (
+        <div className="setting">
+          <label className="setting-label">Pinyin</label>
+          <button
+            className={`toggle${s.pinyin ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={s.pinyin}
+            onClick={() => set({ pinyin: !s.pinyin })}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </div>
+      )}
 
-      <div className="setting">
-        <label className="setting-label">Synopsis pinyin</label>
-        <button
-          className={`toggle${s.synopsisPinyin ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={s.synopsisPinyin}
-          onClick={() => set({ synopsisPinyin: !s.synopsisPinyin })}
-        >
-          <span className="toggle-knob" />
-        </button>
-      </div>
+      {showPinyin && (
+        <div className="setting">
+          <label className="setting-label">Synopsis pinyin</label>
+          <button
+            className={`toggle${s.synopsisPinyin ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={s.synopsisPinyin}
+            onClick={() => set({ synopsisPinyin: !s.synopsisPinyin })}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </div>
+      )}
 
       <div className="setting setting-block">
         <label className="setting-label">Theme</label>

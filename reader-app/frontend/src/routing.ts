@@ -1,6 +1,6 @@
 export type AppRoute =
   | { page: "discover"; q: string; category: string | null; similar: string | null; title: string }
-  | { page: "library"; q: string }
+  | { page: "library"; q: string; path: string }
   | { page: "novel"; id: string }
   | { page: "reader"; id: string; chapter: number | null; line: number | null };
 
@@ -47,7 +47,9 @@ export function currentRoute(): AppRoute {
       line: nonNegativeInt(params.get("line")),
     };
   }
-  if (path === "/library") return { page: "library", q: params.get("q") ?? "" };
+  if (path === "/library") {
+    return { page: "library", q: params.get("q") ?? "", path: params.get("path") ?? "" };
+  }
   return {
     page: "discover",
     q: params.get("q") ?? "",
@@ -75,8 +77,10 @@ export function discoverPath(options: {
   return withParams("/discover", options);
 }
 
-export function libraryPath(q = "") {
-  return withParams("/library", { q });
+// Search (`q`) and the file-explorer folder (`path`) share the /library URL, but
+// the browser only shows when the search box is empty, so they never both matter.
+export function libraryPath(q = "", path = "") {
+  return withParams("/library", { q, path });
 }
 
 export function novelPath(id: string) {

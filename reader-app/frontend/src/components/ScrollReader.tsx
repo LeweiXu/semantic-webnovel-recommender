@@ -97,8 +97,11 @@ export function ScrollReader() {
   const jumpTarget = useReader((s) => s.jumpTarget);
   const clearJump = useReader((s) => s.clearJump);
   const active = useActiveSettings();
-  const pinyin = active.pinyin;
-  const synopsisPinyin = active.synopsisPinyin;
+  // English novels have no pinyin/ruby (tokens come back plain), so force both
+  // off regardless of the setting — keeps the extra ruby line-height off too.
+  const isEnglish = novel.language === "en";
+  const pinyin = active.pinyin && !isEnglish;
+  const synopsisPinyin = active.synopsisPinyin && !isEnglish;
 
   const total = novel.total;
 

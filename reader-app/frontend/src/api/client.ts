@@ -43,6 +43,21 @@ export interface ReadingItem {
   synopsis: string;
 }
 
+export interface ShelfItem {
+  id: string;
+  title: string;
+  author: string;
+  category: string;
+  kind: string; // "novel" | "text" | "doc"
+  language: string;
+  position: number;
+  total: number | null;
+  updated: string;
+  added: string;
+  tags: string[];
+  synopsis: string;
+}
+
 export interface SearchItem {
   url: string;
   nid: string;
@@ -74,6 +89,23 @@ export interface NovelDetail {
   position: number;
   line: number | null;
   chapters: ChapterStub[];
+  kind: string; // "novel" | "text"
+  language: string; // "zh" | "en"
+}
+
+export type BrowseKind = "dir" | "text" | "doc" | "other";
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  kind: BrowseKind;
+  size: number | null;
+}
+
+export interface BrowseListing {
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
 }
 
 export interface Token {
@@ -223,6 +255,18 @@ export const api = {
   reading: () => getJSON<ReadingItem[]>("/api/library/reading"),
   search: (q: string) =>
     getJSON<SearchItem[]>(`/api/library/search?q=${encodeURIComponent(q)}`),
+  browse: (path = "") =>
+    getJSON<BrowseListing>(`/api/browse?path=${encodeURIComponent(path)}`),
+  shelf: () => getJSON<ShelfItem[]>("/api/library/shelf"),
+  addToShelf: (id: string) => postJSON<ShelfItem[]>("/api/library/shelf", { id }),
+  removeFromShelf: (id: string) =>
+    deleteJSON<ShelfItem[]>(`/api/library/shelf?id=${encodeURIComponent(id)}`),
+  // Fetch a downloadable file (epub/pdf/docx) as a blob, auth header attached.
+  downloadFile: async (path: string): Promise<Blob> => {
+    const res = await apiFetch(`/api/file/download?path=${encodeURIComponent(path)}`);
+    if (!res.ok) throw await responseError(res);
+    return res.blob();
+  },
   novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),
   chapter: (nid: string, idx: number, annotate: boolean) =>
     getJSON<ChapterContent>(

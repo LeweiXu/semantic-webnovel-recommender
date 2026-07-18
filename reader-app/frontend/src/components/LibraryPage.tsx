@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ReadingItem, type SearchItem } from "../api/client";
+import { api, type ShelfItem, type SearchItem } from "../api/client";
 import { useAuth } from "../store/auth";
 import { DownloadDialog } from "./DownloadDialog";
+import { FileBrowser } from "./FileBrowser";
 import { currentRoute, libraryPath, navigate, novelPath, writeUrl } from "../routing";
 
 const isNovelUrl = (s: string) =>
@@ -10,14 +11,14 @@ const isNovelUrl = (s: string) =>
 const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
 
-// The reading shelf takes ~1s to come back from the backend, so cache the last
-// result per user in localStorage and show it instantly, then refresh in the
+// The shelf takes ~1s to come back from the backend, so cache the last result
+// per user in localStorage and show it instantly, then refresh in the
 // background (stale-while-revalidate).
-const READING_CACHE_PREFIX = "reader:library:reading:";
+const SHELF_CACHE_PREFIX = "reader:library:shelf:";
 
-function readReadingCache(username: string): ReadingItem[] {
+function readShelfCache(username: string): ShelfItem[] {
   try {
-    const raw = localStorage.getItem(READING_CACHE_PREFIX + username);
+    const raw = localStorage.getItem(SHELF_CACHE_PREFIX + username);
     const parsed = raw ? JSON.parse(raw) : null;
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -25,9 +26,9 @@ function readReadingCache(username: string): ReadingItem[] {
   }
 }
 
-function writeReadingCache(username: string, items: ReadingItem[]) {
+function writeShelfCache(username: string, items: ShelfItem[]) {
   try {
-    localStorage.setItem(READING_CACHE_PREFIX + username, JSON.stringify(items));
+    localStorage.setItem(SHELF_CACHE_PREFIX + username, JSON.stringify(items));
   } catch {
     /* quota or private mode — the network fetch still works, just no cache */
   }
@@ -38,35 +39,67 @@ function pct(position: number, total: number | null): number {
   return Math.min(100, Math.round(((position + 1) / total) * 100));
 }
 
+// Fetch a downloadable file and save it through a temporary anchor. The blob
+// carries the auth header (a plain <a href> can't), so downloads stay logged-in.
+async function saveDoc(item: { id: string; title: string }) {
+  const blob = await api.downloadFile(item.id);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = item.id.split("/").pop() || item.title;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function LibraryPage() {
   const user = useAuth((s) => s.user);
   const ready = useAuth((s) => s.ready);
 
-  const [reading, setReading] = useState<ReadingItem[]>(() =>
-    user ? readReadingCache(user.username) : [],
+  const [shelf, setShelf] = useState<ShelfItem[]>(() =>
+    user ? readShelfCache(user.username) : [],
   );
   const route = currentRoute();
+  const initialBrowsePath = route.page === "library" ? route.path : "";
   const [query, setQuery] = useState(route.page === "library" ? route.q : "");
   const [results, setResults] = useState<SearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [downloadResult, setDownloadResult] = useState<SearchItem | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(!!initialBrowsePath);
 
-  const refreshReading = () => {
+  const refreshShelf = () => {
     if (!user) {
-      setReading([]);
+      setShelf([]);
       return;
     }
     // Paint the cached shelf immediately, then reconcile with the server.
-    setReading(readReadingCache(user.username));
+    setShelf(readShelfCache(user.username));
     api
-      .reading()
+      .shelf()
       .then((items) => {
-        setReading(items);
-        writeReadingCache(user.username, items);
+        setShelf(items);
+        writeShelfCache(user.username, items);
       })
       .catch(() => {});
   };
-  useEffect(refreshReading, [user]);
+  useEffect(refreshShelf, [user]);
+
+  const removeItem = (item: ShelfItem) => {
+    setShelf((cur) => cur.filter((it) => it.id !== item.id)); // optimistic
+    api
+      .removeFromShelf(item.id)
+      .then((items) => {
+        setShelf(items);
+        if (user) writeShelfCache(user.username, items);
+      })
+      .catch(refreshShelf);
+  };
+
+  const openItem = (item: ShelfItem) => {
+    if (item.kind === "doc") saveDoc(item).catch(() => {});
+    else navigate(novelPath(item.id));
+  };
 
   const pastedUrl = useMemo(() => (isNovelUrl(query) ? query.trim() : null), [query]);
 
@@ -97,8 +130,8 @@ export function LibraryPage() {
         <span className="seal-glyph small" aria-hidden>读</span>
         <h1 className="lib-title">Library</h1>
         <p className="lib-sub">
-          Your shelf of novels in progress. Search the catalogue, or paste a
-          52shuku link to download something new.
+          Your shelf of novels. Search the catalogue, browse your files, or paste
+          a 52shuku link to download something new.
         </p>
         <div className="lib-search-wrap">
           <input
@@ -122,7 +155,7 @@ export function LibraryPage() {
             onDone={(nid) => {
               setQuery("");
               writeUrl(libraryPath());
-              refreshReading();
+              refreshShelf();
               navigate(novelPath(nid));
             }}
           />
@@ -174,7 +207,7 @@ export function LibraryPage() {
                 setDownloadResult(null);
                 setQuery("");
                 writeUrl(libraryPath());
-                refreshReading();
+                refreshShelf();
                 navigate(novelPath(nid));
               }}
             />
@@ -184,47 +217,77 @@ export function LibraryPage() {
 
       {!query.trim() && (
         <section className="lib-section">
-          <div className="dsc-section-label">Currently reading</div>
-          {reading.length === 0 ? (
+          <button
+            className="fb-toggle"
+            onClick={() => setBrowseOpen((v) => !v)}
+            aria-expanded={browseOpen}
+          >
+            <span className={`fb-caret${browseOpen ? " is-open" : ""}`} aria-hidden>▸</span>
+            Browse files
+          </button>
+          {browseOpen && <FileBrowser initialPath={initialBrowsePath} onChange={refreshShelf} />}
+        </section>
+      )}
+
+      {!query.trim() && (
+        <section className="lib-section">
+          <div className="dsc-section-label">Your library</div>
+          {shelf.length === 0 ? (
             <div className="dsc-note dsc-idle">
               {!ready
-                ? " " /* auth still restoring — don't flash the logged-out prompt */
+                ? " " /* auth still restoring — don't flash the logged-out prompt */
                 : user
-                ? "Nothing yet. Search above, or find something on Discover."
-                : "Log in from the account button to keep a reading shelf."}
+                ? "Nothing yet. Browse your files above, search, or find something on Discover."
+                : "Log in from the account button to keep a library."}
             </div>
           ) : (
             <div className="lib-grid">
-              {reading.map((r) => (
-                <button
-                  key={r.nid}
-                  className="lib-card"
-                  onClick={() => navigate(novelPath(r.slug ?? r.nid))}
-                >
-                  <div className="lib-card-head">
-                    <h3 className="lib-card-title">{r.title}</h3>
-                    <span className="lib-card-author">
-                      {r.author || "—"}
-                      {r.category ? ` · ${catLabel(r.category)}` : ""}
-                    </span>
-                  </div>
-                  {r.synopsis && <p className="lib-card-synopsis">{r.synopsis}</p>}
-                  {(r.tags ?? []).length > 0 && (
-                    <div className="lib-card-tags">
-                      {(r.tags ?? []).slice(0, 4).map((t) => (
-                        <span key={t} className="lib-tag">{t}</span>
-                      ))}
+              {shelf.map((r) => (
+                <div key={r.id} className="lib-card-wrap">
+                  <button
+                    className="lib-card"
+                    onClick={() => openItem(r)}
+                  >
+                    <div className="lib-card-head">
+                      <h3 className="lib-card-title">{r.title}</h3>
+                      <span className="lib-card-author">
+                        {r.author || (r.kind === "doc" ? "Document" : "—")}
+                        {r.category ? ` · ${catLabel(r.category)}` : ""}
+                        {r.language === "en" ? " · EN" : ""}
+                      </span>
                     </div>
-                  )}
-                  <div className="lib-card-foot">
-                    <span className="lib-bar" aria-hidden>
-                      <span className="lib-bar-fill" style={{ width: `${pct(r.position, r.total)}%` }} />
-                    </span>
-                    <span className="lib-card-meta">
-                      ch {r.position + 1}{r.total ? `/${r.total}` : ""} · {pct(r.position, r.total)}%
-                    </span>
-                  </div>
-                </button>
+                    {r.synopsis && <p className="lib-card-synopsis">{r.synopsis}</p>}
+                    {(r.tags ?? []).length > 0 && (
+                      <div className="lib-card-tags">
+                        {(r.tags ?? []).slice(0, 4).map((t) => (
+                          <span key={t} className="lib-tag">{t}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="lib-card-foot">
+                      {r.kind === "doc" ? (
+                        <span className="lib-card-meta">Download file</span>
+                      ) : (
+                        <>
+                          <span className="lib-bar" aria-hidden>
+                            <span className="lib-bar-fill" style={{ width: `${pct(r.position, r.total)}%` }} />
+                          </span>
+                          <span className="lib-card-meta">
+                            ch {r.position + 1}{r.total ? `/${r.total}` : ""} · {pct(r.position, r.total)}%
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                  <button
+                    className="lib-card-remove"
+                    onClick={() => removeItem(r)}
+                    aria-label="Remove from library"
+                    title="Remove from library"
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}

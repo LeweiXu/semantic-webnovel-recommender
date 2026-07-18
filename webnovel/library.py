@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -83,6 +84,77 @@ def local_synopsis(path: Path) -> Chapter | None:
         lines.pop()
     body = "\n".join(lines).strip()
     return Chapter("Synopsis", body) if body else None
+
+
+# ── Raw file reading (the Library file explorer) ─────────────────────────────
+# These handle arbitrary .txt files that aren't in the metadata store: the
+# Windows dump the user browses (mixed encodings, English + Chinese, no 52shuku
+# preamble). local_chapters/local_synopsis above stay for downloaded 52shuku
+# files, which are always UTF-8 with the generated preamble + "═" dividers.
+
+# A chapter-heading line: a Chinese "第N章/回/卷…" marker, or an English
+# "Chapter/Prologue/…" line. Kept short (matched only on lines < 100 chars) so a
+# sentence that merely starts with "Part" doesn't get treated as a heading.
+_RAW_HEADING_RE = re.compile(
+    r"^\s*(?:"
+    r"第[零一二三四五六七八九十百千万亿两0-9]+[章回卷节部篇折]"
+    r"|(?:chapter|prologue|epilogue|interlude|part|volume|book|act)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def read_text_smart(path: Path) -> str:
+    """Decode a text file, trying the encodings these files actually use.
+
+    Downloaded 52shuku files are UTF-8, but the browsed Windows library has GBK/
+    GB2312 Chinese files too. Try UTF-8 (with/without BOM) first, then GB18030
+    (a superset of GBK/GB2312), then give up and replace bad bytes.
+    """
+    raw = path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _is_heading(line: str) -> bool:
+    stripped = line.strip()
+    return 0 < len(stripped) <= 100 and _RAW_HEADING_RE.match(stripped) is not None
+
+
+def raw_chapters(path: Path) -> list[Chapter]:
+    """Split a raw .txt file into chapters by heading lines.
+
+    Works for both Chinese (第N章) and English (Chapter N) headings. Files with
+    no detectable headings come back as a single "Full text" chapter.
+    """
+    text = read_text_smart(path)
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    heads = [i for i, line in enumerate(lines) if _is_heading(line)]
+    if len(heads) < 2:
+        body = text.strip()
+        return [Chapter("Full text", body)] if body else []
+
+    chapters: list[Chapter] = []
+    preamble = "\n".join(lines[: heads[0]]).strip()
+    if preamble:
+        chapters.append(Chapter("Front matter", preamble))
+    for order, start in enumerate(heads):
+        end = heads[order + 1] if order + 1 < len(heads) else len(lines)
+        title = lines[start].strip()
+        content = "\n".join(lines[start + 1 : end]).strip()
+        chapters.append(Chapter(title, content))
+    return chapters
+
+
+def detect_language(sample: str) -> str:
+    """Return "zh" or "en" from a text sample by Han vs Latin letter counts."""
+    han = sum(1 for ch in sample if "一" <= ch <= "鿿")
+    latin = sum(1 for ch in sample if ch.isascii() and ch.isalpha())
+    return "en" if latin > han else "zh"
 
 
 def live_first_chapter(url: str, page_limit: int = 10) -> tuple[str, bool]:

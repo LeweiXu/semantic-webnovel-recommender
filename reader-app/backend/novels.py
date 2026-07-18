@@ -12,8 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from recsys.store import NovelRecord, load_all
-from webnovel.library import Chapter, local_chapters, local_path, local_synopsis
+from webnovel.library import (
+    Chapter, detect_language, local_chapters, local_path, local_synopsis,
+    raw_chapters,
+)
 from scripts.repo_paths import LIBRARY_DIR
+
+import browse
 
 # Small LRU of parsed chapter lists keyed by novel url. A median novel is
 # ~300k chars; parsing it on every chapter request would be wasteful, so keep a
@@ -36,10 +41,20 @@ _slug_cache: dict[str, str] | None = None
 
 @dataclass
 class ResolvedNovel:
+    # ``id`` is the frontend/URL id (metadata slug or a raw browse path); ``url``
+    # is the progress/cache key (the real 52shuku url, or the raw path for a
+    # file-explorer novel). ``record`` is None for raw files not in the store.
+    id: str
     url: str
-    record: NovelRecord
-    chapters: list[Chapter]
+    title: str
+    author: str
+    category: str
+    tags: list[str]
     synopsis: str
+    chapters: list[Chapter]
+    kind: str = "novel"  # "novel" = metadata-backed, "text" = raw .txt
+    language: str = "zh"
+    record: NovelRecord | None = None
 
 
 def _records() -> dict[str, NovelRecord]:
@@ -115,13 +130,67 @@ def resolve(url: str) -> ResolvedNovel | None:
     chapters = chapters_for(url, record)
     synopsis_chapter = local_synopsis(path)
     synopsis = synopsis_chapter.body if synopsis_chapter else (record.synopsis or "")
-    return ResolvedNovel(url=url, record=record, chapters=chapters, synopsis=synopsis)
+    return ResolvedNovel(
+        id=slug_for(record) or url,
+        url=url,
+        title=record.title,
+        author=record.author,
+        category=record.category,
+        tags=list(record.tags),
+        synopsis=synopsis,
+        chapters=chapters,
+        kind="novel",
+        language="zh",
+        record=record,
+    )
 
 
 def resolve_slug(slug: str) -> ResolvedNovel | None:
     """Resolve a "<category>/<stem>" slug to a downloaded novel, or None."""
     url = url_for_slug(slug)
     return resolve(url) if url is not None else None
+
+
+def resolve_path(rawid: str) -> ResolvedNovel | None:
+    """Resolve a raw browse path (e.g. "GL/foo.txt") to a readable novel, or None.
+
+    This is the file-explorer read path: it opens .txt files that aren't in the
+    metadata store, so there's no NovelRecord. Chapters and language come from
+    the file itself. The rawid doubles as the progress/cache key.
+    """
+    try:
+        path = browse.safe_join(rawid)
+    except ValueError:
+        return None
+    if not path.is_file() or browse.classify(path) != "text":
+        return None
+
+    with _cache_lock:
+        chapters = _chapter_cache.get(rawid)
+        if chapters is not None:
+            _chapter_cache.move_to_end(rawid)
+    if chapters is None:
+        chapters = raw_chapters(path)
+        with _cache_lock:
+            _chapter_cache[rawid] = chapters
+            _chapter_cache.move_to_end(rawid)
+            while len(_chapter_cache) > _CACHE_SIZE:
+                _chapter_cache.popitem(last=False)
+
+    sample = "\n".join(ch.text() for ch in chapters[:1])[:2000]
+    return ResolvedNovel(
+        id=rawid,
+        url=rawid,
+        title=path.stem,
+        author="",
+        category="",
+        tags=[],
+        synopsis="",
+        chapters=chapters,
+        kind="text",
+        language=detect_language(sample),
+        record=None,
+    )
 
 
 def invalidate(url: str) -> None:

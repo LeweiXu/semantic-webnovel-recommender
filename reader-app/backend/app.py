@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -24,17 +24,19 @@ from webnovel.library import list_library
 import admin_jobs
 import annotate
 import auth
+import browse
 import dictionary
 import novels
 import recommend_api
+import user_library
 import user_progress
 import user_settings
 from auth import current_user, optional_user
 from download_api import download_events
 from ids import nid_decode, nid_encode
 from schemas import (
-    ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut,
-    ReadingItem, SearchItem,
+    BrowseListing, ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut,
+    ReadingItem, SearchItem, ShelfItem,
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
@@ -107,10 +109,13 @@ def reading(username: str = Depends(current_user)) -> list[ReadingItem]:
     items: list[ReadingItem] = []
     for url, entry in user_progress.all_progress(username).items():
         record = records.get(url)
+        # Raw file-explorer novels aren't in the store and key progress by their
+        # browse path (not an http url); route them by that path via ``slug``.
+        raw_id = url if record is None and not url.startswith(("http://", "https://")) else None
         items.append(ReadingItem(
             url=url,
             nid=nid_encode(url),
-            slug=novels.slug_for(record),
+            slug=novels.slug_for(record) or raw_id,
             title=entry.get("title") or (record.title if record else url),
             author=record.author if record else "",
             category=record.category if record else "",
@@ -142,13 +147,105 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
     ]
 
 
+# ── Personal library (the explicit shelf) ────────────────────────────────────
+
+def _describe_shelf_id(id: str) -> dict | None:
+    """Resolve a shelf id to {id, url, title, kind, language}, or None.
+
+    Handles metadata slugs, raw .txt paths, and downloadable docs (epub/pdf/
+    docx), which aren't readable but can still live on the shelf.
+    """
+    resolved = novels.resolve_slug(id) or novels.resolve_path(id)
+    if resolved is not None:
+        return {
+            "id": resolved.id, "url": resolved.url, "title": resolved.title,
+            "kind": resolved.kind, "language": resolved.language,
+        }
+    try:
+        path = browse.safe_join(id)
+    except ValueError:
+        return None
+    if path.is_file() and browse.classify(path) == "doc":
+        return {"id": id, "url": id, "title": path.stem, "kind": "doc", "language": ""}
+    return None
+
+
+@app.get("/api/library/shelf", response_model=list[ShelfItem])
+def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
+    records = load_all()
+    items: list[ShelfItem] = []
+    for entry in user_library.all_items(username):
+        url = entry.get("url", entry["id"])
+        record = records.get(url)
+        prog = user_progress.get_entry(username, url)
+        items.append(ShelfItem(
+            id=entry["id"],
+            title=entry.get("title") or (record.title if record else entry["id"]),
+            author=record.author if record else "",
+            category=record.category if record else "",
+            kind=entry.get("kind", "novel"),
+            language=entry.get("language", "zh"),
+            position=int(prog.get("position", 0)),
+            total=prog.get("total"),
+            updated=prog.get("updated", ""),
+            added=entry.get("added", ""),
+            tags=list(record.tags[:8]) if record else [],
+            synopsis=(record.synopsis or "") if record else "",
+        ))
+    # Recently read floats to the top, then recently added.
+    items.sort(key=lambda it: it.updated or it.added, reverse=True)
+    return items
+
+
+@app.post("/api/library/shelf", response_model=list[ShelfItem])
+def add_to_shelf(body: dict, username: str = Depends(current_user)) -> list[ShelfItem]:
+    info = _describe_shelf_id(str(body.get("id", "")))
+    if info is None:
+        raise HTTPException(status_code=404, detail="No such novel")
+    user_library.add(
+        username, info["id"], url=info["url"], title=info["title"],
+        kind=info["kind"], language=info["language"],
+    )
+    return shelf(username)
+
+
+@app.delete("/api/library/shelf", response_model=list[ShelfItem])
+def remove_from_shelf(id: str = Query(...), username: str = Depends(current_user)) -> list[ShelfItem]:
+    user_library.remove(username, id)
+    return shelf(username)
+
+
+@app.get("/api/file/download")
+def file_download(path: str = Query(...), _username: str = Depends(current_user)):
+    try:
+        target = browse.safe_join(path)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No such file")
+    if not target.is_file() or browse.classify(target) != "doc":
+        raise HTTPException(status_code=404, detail="No such file")
+    return FileResponse(target, filename=target.name)
+
+
+# ── File explorer ────────────────────────────────────────────────────────────
+
+@app.get("/api/browse", response_model=BrowseListing)
+def browse_dir(path: str = Query(default="")) -> BrowseListing:
+    try:
+        return BrowseListing(**browse.list_dir(path))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No such folder")
+
+
 # ── Novel + chapters ─────────────────────────────────────────────────────────
 
 def _resolve_or_404(nid: str):
-    # ``nid`` is the frontend id: either a readable "<category>/<stem>" slug or a
-    # legacy base64 url id. Slugs contain a "/", base64 ids never do — so only the
-    # single-segment form falls back to base64 decoding (keeps old links working).
+    # ``nid`` is the frontend id, resolved in order of specificity:
+    #  1. a "<category>/<stem>" metadata slug (downloaded 52shuku novels),
+    #  2. a raw browse path like "GL/foo.txt" (the file explorer), or
+    #  3. a legacy base64 url id (keeps old shared links working; no "/").
     resolved = novels.resolve_slug(nid)
+    if resolved is None:
+        resolved = novels.resolve_path(nid)
     if resolved is None and "/" not in nid:
         try:
             url = nid_decode(nid)
@@ -158,6 +255,18 @@ def _resolve_or_404(nid: str):
     if resolved is None:
         raise HTTPException(status_code=404, detail="Novel not downloaded")
     return resolved
+
+
+def _plain_tokens(body: str) -> list[dict]:
+    """Untokenized tokens for non-Chinese text: whole lines, no pinyin, with the
+    "\\n" paragraph-break tokens the reader splits on. Skips jieba/pypinyin."""
+    tokens: list[dict] = []
+    for i, line in enumerate(body.split("\n")):
+        if i:
+            tokens.append({"t": "\n", "py": None})
+        if line:
+            tokens.append({"t": line, "py": None})
+    return tokens
 
 
 # Chapter and progress are declared before the catch-all detail route below,
@@ -170,8 +279,11 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
     if not (0 <= idx < total):
         raise HTTPException(status_code=404, detail="Chapter out of range")
     ch = resolved.chapters[idx]
-    if annotate_flag:
+    if annotate_flag and resolved.language != "en":
         tokens = _annotated_tokens(resolved.url, idx, ch.body)  # already [{t, py}] dicts
+    elif resolved.language == "en":
+        # English text has no pinyin/word-lookup; skip jieba and keep paragraphs.
+        tokens = _plain_tokens(ch.body)
     else:
         tokens = [{"t": ch.body, "py": None}]
     # Return the token dicts directly; validating 2k+ token models per chapter
@@ -196,7 +308,7 @@ def set_progress(
     line = max(0, body.line) if body.line is not None else None
     entry = user_progress.set_position(
         username, resolved.url, position, line,
-        title=resolved.record.title, total=total, force=body.reset,
+        title=resolved.title, total=total, force=body.reset,
     )
     return ProgressOut(
         ok=True,
@@ -210,21 +322,32 @@ def set_progress(
 def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> NovelDetail:
     resolved = _resolve_or_404(nid)
     total = len(resolved.chapters)
+    # Opening a novel puts it on the shelf (the explicit library is the shelf).
+    if username:
+        user_library.add(
+            username, resolved.id, url=resolved.url, title=resolved.title,
+            kind=resolved.kind, language=resolved.language,
+        )
     entry = user_progress.get_entry(username, resolved.url) if username else {}
     saved = int(entry.get("position", 0))
     position = min(saved, max(total - 1, 0))
     line = int(entry["line"]) if position == saved and entry.get("line") is not None else None
     # Annotate the synopsis too (pinyin + clickable words). The client only shows
     # it when the reader turns the synopsis-pinyin setting on; cache like chapters.
-    synopsis_tokens = _annotated_tokens(resolved.url, -1, resolved.synopsis) if resolved.synopsis else []
+    # English novels skip annotation entirely.
+    synopsis_tokens = (
+        _annotated_tokens(resolved.url, -1, resolved.synopsis)
+        if resolved.synopsis and resolved.language != "en"
+        else []
+    )
     return NovelDetail(
         url=resolved.url,
         nid=nid_encode(resolved.url),
-        slug=novels.slug_for(resolved.record) or nid_encode(resolved.url),
-        title=resolved.record.title,
-        author=resolved.record.author,
-        category=resolved.record.category,
-        tags=list(resolved.record.tags[:12]),
+        slug=resolved.id,
+        title=resolved.title,
+        author=resolved.author,
+        category=resolved.category,
+        tags=list(resolved.tags[:12]),
         synopsis=resolved.synopsis,
         synopsis_tokens=synopsis_tokens,
         downloaded=True,
@@ -235,6 +358,8 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
             ChapterStub(index=i, title=c.title)
             for i, c in enumerate(resolved.chapters)
         ],
+        kind=resolved.kind,
+        language=resolved.language,
     )
 
 

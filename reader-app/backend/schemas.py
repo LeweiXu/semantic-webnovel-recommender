@@ -40,6 +40,21 @@ class ReadingItem(BaseModel):
     synopsis: str = ""
 
 
+class ShelfItem(BaseModel):
+    id: str  # route id: metadata slug or raw browse path
+    title: str
+    author: str = ""
+    category: str = ""
+    kind: str = "novel"  # "novel" | "text" | "doc"
+    language: str = "zh"
+    position: int = 0
+    total: int | None = None
+    updated: str = ""  # last read; "" if never opened
+    added: str = ""
+    tags: list[str] = []
+    synopsis: str = ""
+
+
 class SearchItem(BaseModel):
     url: str
     nid: str
@@ -49,6 +64,19 @@ class SearchItem(BaseModel):
     category: str = ""
     downloaded: bool = False
     chapter_count: int | None = None
+
+
+class BrowseEntry(BaseModel):
+    name: str
+    path: str  # browse-root-relative posix path
+    kind: str  # "dir" | "text" | "doc" | "other"
+    size: int | None = None
+
+
+class BrowseListing(BaseModel):
+    path: str  # "" at the root
+    parent: str | None = None  # None at the root; "" means the root is the parent
+    entries: list[BrowseEntry]
 
 
 class ChapterStub(BaseModel):
@@ -76,6 +104,8 @@ class NovelDetail(BaseModel):
     position: int = 0
     line: int | None = None
     chapters: list[ChapterStub]
+    kind: str = "novel"  # "novel" = metadata-backed, "text" = raw browsed file
+    language: str = "zh"  # "zh" | "en" — drives pinyin/ruby on the client
 
 
 class ChapterContent(BaseModel):

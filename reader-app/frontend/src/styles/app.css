@@ -856,12 +856,12 @@ rt.rt-hidden {
 }
 .download-log {
   margin: 10px 0 0;
-  max-height: 150px;
-  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.7rem;
   line-height: 1.5;
   color: var(--ink-soft);
-  white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -1336,12 +1336,28 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg);
   border-radius: 7px;
   padding: 7px 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .rec-dl.is-error { color: var(--accent); }
 .rec-dl.is-done { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+.rec-dl-msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Thin progress bar shared by rec cards and the paste-URL download dialog. */
+.rec-dl-bar {
+  flex: none;
+  width: 70px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.rec-dl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
+}
 
 /* Semantic map */
 .dsc-map-panel {
@@ -1575,6 +1591,14 @@ input[type="range"]::-moz-range-thumb {
 .lib-card-wrap:hover .lib-card-remove,
 .lib-card-remove:focus-visible { opacity: 1; }
 .lib-card-remove:hover { color: var(--accent); border-color: var(--accent); }
+.lib-card.is-downloading {
+  cursor: default;
+  opacity: 0.8;
+  background: var(--surface);
+}
+.lib-card.is-downloading .lib-card-title { color: var(--ink-soft); }
+.lib-card.is-downloading.is-error .lib-card-author { color: var(--accent); }
+.lib-card.is-downloading .lib-bar-fill { transition: width 0.3s var(--ease); }
 .lib-card-foot { margin-top: auto; display: flex; flex-direction: column; gap: 5px; }
 .lib-bar { height: 4px; border-radius: 999px; background: var(--hairline); overflow: hidden; }
 .lib-bar-fill { display: block; height: 100%; background: var(--accent); }

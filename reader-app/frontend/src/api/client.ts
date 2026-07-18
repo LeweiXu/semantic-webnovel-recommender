@@ -50,6 +50,8 @@ export interface ShelfItem {
   category: string;
   kind: string; // "novel" | "text" | "doc"
   language: string;
+  downloaded: boolean; // false while a novel is still downloading
+  url: string; // download/progress key, matches the downloads store
   position: number;
   total: number | null;
   updated: string;
@@ -106,6 +108,17 @@ export interface BrowseListing {
   path: string;
   parent: string | null;
   entries: BrowseEntry[];
+}
+
+export interface DownloadDTO {
+  url: string;
+  nid: string;
+  title: string;
+  status: "queued" | "running" | "done" | "error";
+  done: number;
+  total: number;
+  slug: string | null;
+  error: string | null;
 }
 
 export interface Token {
@@ -257,6 +270,8 @@ export const api = {
     getJSON<SearchItem[]>(`/api/library/search?q=${encodeURIComponent(q)}`),
   browse: (path = "") =>
     getJSON<BrowseListing>(`/api/browse?path=${encodeURIComponent(path)}`),
+  startDownload: (url: string) => postJSON<DownloadDTO>("/api/download", { url }),
+  downloads: () => getJSON<DownloadDTO[]>("/api/downloads"),
   shelf: () => getJSON<ShelfItem[]>("/api/library/shelf"),
   addToShelf: (id: string) => postJSON<ShelfItem[]>("/api/library/shelf", { id }),
   removeFromShelf: (id: string) =>
@@ -309,22 +324,6 @@ export const api = {
   deleteAdminHistory: (id: string) =>
     deleteJSON<AdminCommand[]>(`/api/admin/jobs/history/${encodeURIComponent(id)}`),
 };
-
-// Stream a download as Server-Sent Events. Calls onEvent for each parsed event;
-// resolves when the stream closes.
-export async function downloadStream(
-  url: string,
-  onEvent: (event: string, data: any) => void,
-): Promise<void> {
-  const res = await apiFetch("/api/download", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-  if (!res.ok) throw await responseError(res);
-  if (!res.body) throw new Error("Download stream was unavailable");
-  await readEventStream(res.body, onEvent);
-}
 
 async function readEventStream(
   body: ReadableStream<Uint8Array>,

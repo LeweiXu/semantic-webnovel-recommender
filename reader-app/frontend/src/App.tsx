@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useReader } from "./store/reader";
+import { useDownloads } from "./store/downloads";
 import { useSettings, useActiveSettings, applySettings } from "./store/settings";
 import { useSettingsSync } from "./hooks/useSettingsSync";
 import { useIsMobile } from "./hooks/useIsMobile";
@@ -45,11 +46,15 @@ export default function App() {
   const toggleToc = useReader((s) => s.toggleToc);
   const openNovel = useReader((s) => s.openNovel);
   const chromeVisible = useReader((s) => s.chromeVisible);
+  const initDownloads = useDownloads((s) => s.init);
 
   // The viewport decides which settings profile is active (desktop vs mobile).
   useEffect(() => setProfile(isMobile ? "mobile" : "desktop"), [isMobile, setProfile]);
   useEffect(() => applySettings(activeSettings), [activeSettings]);
   useEffect(() => { restoreAuth(); }, [restoreAuth]);
+  // Once logged in, pick up any downloads already running on the server (they
+  // survive reloads), and keep mirroring them.
+  useEffect(() => { if (user) initDownloads(); }, [user, initDownloads]);
   useSettingsSync();
 
   useEffect(() => {

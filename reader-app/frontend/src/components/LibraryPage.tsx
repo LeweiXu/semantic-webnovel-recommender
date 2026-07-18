@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type ShelfItem, type SearchItem } from "../api/client";
 import { useAuth } from "../store/auth";
+import { useDownloads, type DlState } from "../store/downloads";
 import { DownloadDialog } from "./DownloadDialog";
 import { FileBrowser } from "./FileBrowser";
 import { currentRoute, libraryPath, navigate, novelPath, writeUrl } from "../routing";
@@ -53,9 +54,69 @@ async function saveDoc(item: { id: string; title: string }) {
   URL.revokeObjectURL(url);
 }
 
+// A card for a shelf novel whose file isn't here yet. Shows live page progress
+// while downloading, an error with dismiss on failure, or a Download/retry
+// button when there's no active download (e.g. after a reload).
+function DownloadingCard({
+  title,
+  dl,
+  onRetry,
+  onDismiss,
+}: {
+  title: string;
+  dl?: DlState;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+}) {
+  const running = dl?.status === "queued" || dl?.status === "running";
+  const errored = dl?.status === "error";
+  const pctDone = dl && dl.total > 0 ? Math.round((dl.done / dl.total) * 100) : 0;
+  return (
+    <div className="lib-card-wrap">
+      <div className={`lib-card is-downloading${errored ? " is-error" : ""}`}>
+        <div className="lib-card-head">
+          <h3 className="lib-card-title">{title}</h3>
+          <span className="lib-card-author">
+            {errored ? "Download failed" : running ? "Downloading…" : "Not downloaded"}
+          </span>
+        </div>
+        {running ? (
+          <div className="lib-card-foot">
+            <span className="lib-bar" aria-hidden>
+              <span className="lib-bar-fill" style={{ width: `${pctDone}%` }} />
+            </span>
+            <span className="lib-card-meta">
+              {dl?.total ? `page ${dl.done}/${dl.total}` : "Queued…"}
+            </span>
+          </div>
+        ) : (
+          <div className="lib-card-foot">
+            <span className="lib-card-meta">{errored ? dl?.error : "Tap to download this novel."}</span>
+            {onRetry && (
+              <button className="result-download" onClick={onRetry}>
+                {errored ? "Retry" : "Download"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {!running && onDismiss && (
+        <button className="lib-card-remove" onClick={onDismiss} aria-label="Remove" title="Remove">
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+            <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function LibraryPage() {
   const user = useAuth((s) => s.user);
   const ready = useAuth((s) => s.ready);
+  const downloads = useDownloads((s) => s.map);
+  const startDownload = useDownloads((s) => s.start);
+  const clearDownload = useDownloads((s) => s.clear);
 
   const [shelf, setShelf] = useState<ShelfItem[]>(() =>
     user ? readShelfCache(user.username) : [],
@@ -65,7 +126,6 @@ export function LibraryPage() {
   const [query, setQuery] = useState(route.page === "library" ? route.q : "");
   const [results, setResults] = useState<SearchItem[]>([]);
   const [searching, setSearching] = useState(false);
-  const [downloadResult, setDownloadResult] = useState<SearchItem | null>(null);
   const [browseOpen, setBrowseOpen] = useState(!!initialBrowsePath);
 
   const refreshShelf = () => {
@@ -84,6 +144,18 @@ export function LibraryPage() {
       .catch(() => {});
   };
   useEffect(refreshShelf, [user]);
+
+  // Re-fetch the shelf whenever a download changes phase (a novel is added on
+  // start, and flips to downloaded when it finishes). Keyed on statuses only, so
+  // per-page progress ticks don't spam the network.
+  const dlSignature = Object.values(downloads)
+    .map((d) => `${d.url}:${d.status}`)
+    .sort()
+    .join("|");
+  useEffect(() => {
+    if (user) refreshShelf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dlSignature]);
 
   const removeItem = (item: ShelfItem) => {
     setShelf((cur) => cur.filter((it) => it.id !== item.id)); // optimistic
@@ -123,6 +195,12 @@ export function LibraryPage() {
       window.clearTimeout(handle);
     };
   }, [query, pastedUrl]);
+
+  // Downloads with no shelf card yet (the brief gap before the first refresh).
+  const shelfUrls = new Set(shelf.map((s) => s.url));
+  const orphanDownloads = Object.values(downloads).filter(
+    (d) => d.status !== "done" && !shelfUrls.has(d.url),
+  );
 
   return (
     <div className="library">
@@ -171,47 +249,46 @@ export function LibraryPage() {
         <section className="lib-section">
           <div className="dsc-section-label">{searching ? "Searching…" : "Results"}</div>
           <ul className="lib-results">
-            {results.map((r) => (
-              <li key={r.nid} className="lib-result">
-                <button
-                  className="lib-result-main"
-                  disabled={!r.downloaded}
-                  onClick={() => r.downloaded && navigate(novelPath(r.slug ?? r.nid))}
-                  title={r.downloaded ? "" : "Not downloaded yet"}
-                >
-                  <span className="lib-result-title">{r.title}</span>
-                  <span className="lib-result-meta">
-                    {r.author || "—"}
-                    {r.category ? ` · ${catLabel(r.category)}` : ""}
-                    {!r.downloaded && <em className="tag-meta"> · metadata only</em>}
-                  </span>
-                </button>
-                {!r.downloaded && (
+            {results.map((r) => {
+              const dl = downloads[r.url];
+              const running = dl?.status === "queued" || dl?.status === "running";
+              const downloaded = r.downloaded || dl?.status === "done";
+              return (
+                <li key={r.nid} className="lib-result">
                   <button
-                    className="result-download"
-                    disabled={!user}
-                    title={user ? "Download this novel" : "Log in to download"}
-                    onClick={() => setDownloadResult(r)}
+                    className="lib-result-main"
+                    disabled={!downloaded}
+                    onClick={() => downloaded && navigate(novelPath(r.slug ?? dl?.slug ?? r.nid))}
+                    title={downloaded ? "" : "Not downloaded yet"}
                   >
-                    Download
+                    <span className="lib-result-title">{r.title}</span>
+                    <span className="lib-result-meta">
+                      {r.author || "—"}
+                      {r.category ? ` · ${catLabel(r.category)}` : ""}
+                      {running && (
+                        <em className="tag-meta">
+                          {" · "}
+                          {dl?.total ? `downloading ${dl.done}/${dl.total}` : "downloading…"}
+                        </em>
+                      )}
+                      {!downloaded && !running && <em className="tag-meta"> · metadata only</em>}
+                    </span>
                   </button>
-                )}
-              </li>
-            ))}
+                  {!downloaded && (
+                    <button
+                      className="result-download"
+                      disabled={!user || running}
+                      title={user ? "Download this novel" : "Log in to download"}
+                      onClick={() => startDownload(r.url)}
+                    >
+                      {running ? "Downloading…" : "Download"}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
             {!searching && results.length === 0 && <li className="empty">No matches.</li>}
           </ul>
-          {downloadResult && (
-            <DownloadDialog
-              url={downloadResult.url}
-              onDone={(nid) => {
-                setDownloadResult(null);
-                setQuery("");
-                writeUrl(libraryPath());
-                refreshShelf();
-                navigate(novelPath(nid));
-              }}
-            />
-          )}
         </section>
       )}
 
@@ -232,7 +309,7 @@ export function LibraryPage() {
       {!query.trim() && (
         <section className="lib-section">
           <div className="dsc-section-label">Your library</div>
-          {shelf.length === 0 ? (
+          {shelf.length === 0 && orphanDownloads.length === 0 ? (
             <div className="dsc-note dsc-idle">
               {!ready
                 ? " " /* auth still restoring — don't flash the logged-out prompt */
@@ -242,60 +319,78 @@ export function LibraryPage() {
             </div>
           ) : (
             <div className="lib-grid">
-              {shelf.map((r) => (
-                <div key={r.id} className="lib-card-wrap">
-                  <button
-                    className="lib-card"
-                    onClick={() => openItem(r)}
-                  >
-                    <div className="lib-card-head">
-                      <h3 className="lib-card-title">{r.title}</h3>
-                      <span className="lib-card-author">
-                        {r.author || (r.kind === "doc" ? "Document" : "—")}
-                        {r.category ? ` · ${catLabel(r.category)}` : ""}
-                        {r.language === "en" ? " · EN" : ""}
-                      </span>
-                    </div>
-                    {r.synopsis && <p className="lib-card-synopsis">{r.synopsis}</p>}
-                    {(r.tags ?? []).length > 0 && (
-                      <div className="lib-card-tags">
-                        {(r.tags ?? []).slice(0, 4).map((t) => (
-                          <span key={t} className="lib-tag">{t}</span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="lib-card-foot">
-                      {r.kind === "doc" ? (
-                        <span className="lib-card-meta">Download file</span>
-                      ) : (
-                        <>
-                          <span className="lib-bar" aria-hidden>
-                            <span className="lib-bar-fill" style={{ width: `${pct(r.position, r.total)}%` }} />
-                          </span>
-                          <span className="lib-card-meta">
-                            ch {r.position + 1}{r.total ? `/${r.total}` : ""} · {pct(r.position, r.total)}%
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </button>
-                  <button
-                    className="lib-card-remove"
-                    onClick={() => removeItem(r)}
-                    aria-label="Remove from library"
-                    title="Remove from library"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
-                      <path
-                        d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </div>
+              {orphanDownloads.map((d) => (
+                <DownloadingCard
+                  key={d.url}
+                  title={d.title}
+                  dl={d}
+                  onRetry={() => startDownload(d.url)}
+                  onDismiss={() => clearDownload(d.url)}
+                />
               ))}
+              {shelf.map((r) => {
+                const dl = downloads[r.url];
+                if (!r.downloaded) {
+                  return (
+                    <DownloadingCard
+                      key={r.id}
+                      title={r.title}
+                      dl={dl}
+                      onRetry={() => startDownload(r.url)}
+                      onDismiss={() => {
+                        clearDownload(r.url);
+                        removeItem(r);
+                      }}
+                    />
+                  );
+                }
+                return (
+                  <div key={r.id} className="lib-card-wrap">
+                    <button className="lib-card" onClick={() => openItem(r)}>
+                      <div className="lib-card-head">
+                        <h3 className="lib-card-title">{r.title}</h3>
+                        <span className="lib-card-author">
+                          {r.author || (r.kind === "doc" ? "Document" : "—")}
+                          {r.category ? ` · ${catLabel(r.category)}` : ""}
+                          {r.language === "en" ? " · EN" : ""}
+                        </span>
+                      </div>
+                      {r.synopsis && <p className="lib-card-synopsis">{r.synopsis}</p>}
+                      {(r.tags ?? []).length > 0 && (
+                        <div className="lib-card-tags">
+                          {(r.tags ?? []).slice(0, 4).map((t) => (
+                            <span key={t} className="lib-tag">{t}</span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="lib-card-foot">
+                        {r.kind === "doc" ? (
+                          <span className="lib-card-meta">Download file</span>
+                        ) : (
+                          <>
+                            <span className="lib-bar" aria-hidden>
+                              <span className="lib-bar-fill" style={{ width: `${pct(r.position, r.total)}%` }} />
+                            </span>
+                            <span className="lib-card-meta">
+                              ch {r.position + 1}{r.total ? `/${r.total}` : ""} · {pct(r.position, r.total)}%
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </button>
+                    <button
+                      className="lib-card-remove"
+                      onClick={() => removeItem(r)}
+                      aria-label="Remove from library"
+                      title="Remove from library"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                        <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

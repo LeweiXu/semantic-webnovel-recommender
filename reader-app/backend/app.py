@@ -170,17 +170,48 @@ def _describe_shelf_id(id: str) -> dict | None:
     return None
 
 
+def _shelf_id_for_url(url: str, records: dict) -> str | None:
+    """The route id (slug or raw path) a progress url maps to, or None if it
+    can't be addressed (e.g. a downloaded-then-removed metadata record)."""
+    record = records.get(url)
+    if record is not None:
+        return novels.slug_for(record)
+    if not url.startswith(("http://", "https://")):
+        return url  # raw file-explorer novel keyed by its browse path
+    return None
+
+
 @app.get("/api/library/shelf", response_model=list[ShelfItem])
 def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
     records = load_all()
-    items: list[ShelfItem] = []
-    for entry in user_library.all_items(username):
-        url = entry.get("url", entry["id"])
+    progress = user_progress.all_progress(username)
+    lib = user_library.load(username)
+    removed = set(lib["removed"])
+
+    # The shelf is the explicit library, plus any novel with reading progress
+    # that hasn't been explicitly removed (so a reading list is never lost).
+    merged: dict[str, dict] = {id: dict(entry) for id, entry in lib["items"].items()}
+    for url, prog in progress.items():
+        id = _shelf_id_for_url(url, records)
+        if id is None or id in removed or id in merged:
+            continue
         record = records.get(url)
-        prog = user_progress.get_entry(username, url)
+        merged[id] = {
+            "url": url,
+            "title": prog.get("title") or (record.title if record else id),
+            "kind": "novel" if record else "text",
+            "language": "zh",
+            "added": prog.get("updated", ""),
+        }
+
+    items: list[ShelfItem] = []
+    for id, entry in merged.items():
+        url = entry.get("url", id)
+        record = records.get(url)
+        prog = progress.get(url, {})
         items.append(ShelfItem(
-            id=entry["id"],
-            title=entry.get("title") or (record.title if record else entry["id"]),
+            id=id,
+            title=entry.get("title") or (record.title if record else id),
             author=record.author if record else "",
             category=record.category if record else "",
             kind=entry.get("kind", "novel"),

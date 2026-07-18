@@ -126,26 +126,41 @@ class ResolvePathTests(unittest.TestCase):
 
 
 class ShelfTests(unittest.TestCase):
-    def test_add_is_idempotent_remove_and_ordering(self) -> None:
+    def test_add_is_idempotent_and_remove_records_removal(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(
             user_library, "LIBRARY_DIR", Path(directory)
         ):
             user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A", kind="text")
-            user_library.add("alice", "GL/b.txt", url="GL/b.txt", title="B", kind="text")
             user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A2", kind="text")
-            items = user_library.all_items("alice")
-            self.assertEqual([it["id"] for it in items], ["GL/b.txt", "GL/a.txt"])
-            self.assertEqual(items[1]["title"], "A")  # idempotent: first add wins
+            lib = user_library.load("alice")
+            self.assertEqual(lib["items"]["GL/a.txt"]["title"], "A")  # first add wins
             self.assertTrue(user_library.remove("alice", "GL/a.txt"))
             self.assertFalse(user_library.remove("alice", "GL/a.txt"))
-            self.assertEqual([it["id"] for it in user_library.all_items("alice")], ["GL/b.txt"])
+            lib = user_library.load("alice")
+            self.assertNotIn("GL/a.txt", lib["items"])
+            self.assertIn("GL/a.txt", lib["removed"])
+            # Re-adding clears the removal.
+            user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A", kind="text")
+            self.assertNotIn("GL/a.txt", user_library.load("alice")["removed"])
+
+    def test_legacy_flat_file_is_read_as_items(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_library, "LIBRARY_DIR", Path(directory)
+        ):
+            (Path(directory) / "alice.json").write_text(
+                '{"GL/a.txt": {"url": "GL/a.txt", "title": "A", "kind": "text"}}',
+                encoding="utf-8",
+            )
+            lib = user_library.load("alice")
+            self.assertIn("GL/a.txt", lib["items"])
+            self.assertEqual(lib["removed"], [])
 
     def test_users_are_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(
             user_library, "LIBRARY_DIR", Path(directory)
         ):
             user_library.add("alice", "x", url="x", title="X")
-            self.assertEqual(user_library.all_items("bob"), [])
+            self.assertEqual(user_library.load("bob"), {"items": {}, "removed": []})
 
 
 if __name__ == "__main__":

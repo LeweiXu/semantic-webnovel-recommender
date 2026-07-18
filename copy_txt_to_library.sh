@@ -27,7 +27,9 @@ for arg in "$@"; do
   case "$arg" in
     -n|--dry-run) DRY="--dry-run" ;;
     -h|--help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      # Print the leading comment block (everything from line 2 up to the first
+      # non-comment line), stripped of the leading "# ".
+      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
       exit 0 ;;
     *) echo "unknown arg: $arg (try --help)" >&2; exit 2 ;;
   esac

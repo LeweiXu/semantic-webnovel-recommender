@@ -1508,7 +1508,18 @@ input[type="range"]::-moz-range-thumb {
 .lib-section { margin-top: 28px; }
 
 .lib-results { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.lib-result { display: flex; align-items: center; gap: 8px; }
+/* The whole row is the panel (full width, same for every result); the download
+   button lives inside it. */
+.lib-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 14px;
+}
+.lib-result:hover { border-color: var(--hairline-strong); }
 .lib-result-main {
   flex: 1;
   min-width: 0;
@@ -1516,14 +1527,17 @@ input[type="range"]::-moz-range-thumb {
   flex-direction: column;
   gap: 2px;
   text-align: left;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: var(--ink);
 }
-.lib-result-main:not(:disabled):hover { border-color: var(--hairline-strong); }
+.lib-result-main:not(:disabled) { cursor: pointer; }
 .lib-result-main:disabled { opacity: 0.75; cursor: default; }
+/* Metadata-only (not downloaded) results read as de-emphasized, but the Download
+   button inside stays crisp. */
+.lib-result.is-faded { border-color: color-mix(in srgb, var(--hairline) 55%, transparent); }
+.lib-result.is-faded .lib-result-main { opacity: 0.5; }
 .lib-result-title { font-family: var(--font-reading); font-size: 1rem; }
 .lib-result-meta { color: var(--muted); font-size: 0.78rem; }
 
@@ -1600,6 +1614,7 @@ input[type="range"]::-moz-range-thumb {
 .lib-card.is-downloading.is-error .lib-card-author { color: var(--accent); }
 .lib-card.is-downloading .lib-bar-fill { transition: width 0.3s var(--ease); }
 .lib-card-foot { margin-top: auto; display: flex; flex-direction: column; gap: 5px; }
+.lib-card-dl-idle { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
 .lib-bar { height: 4px; border-radius: 999px; background: var(--hairline); overflow: hidden; }
 .lib-bar-fill { display: block; height: 100%; background: var(--accent); }
 .lib-card-meta { color: var(--muted); font-size: 0.74rem; }

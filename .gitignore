@@ -22,6 +22,7 @@ data/reading_progress.json
 data/.jwt_secret
 data/users.json
 data/user_progress/
+data/user_library/
 data/user_settings/
 data/admin_jobs.json
 data/admin_command_history.json

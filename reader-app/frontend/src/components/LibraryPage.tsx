@@ -58,12 +58,14 @@ async function saveDoc(item: { id: string; title: string }) {
 // while downloading, an error with dismiss on failure, or a Download/retry
 // button when there's no active download (e.g. after a reload).
 function DownloadingCard({
+  item,
   title,
   dl,
   onRetry,
   onDismiss,
 }: {
-  title: string;
+  item?: ShelfItem; // full metadata for a shelf-backed download (author, tags, synopsis)
+  title?: string; // fallback name when there's no shelf item yet
   dl?: DlState;
   onRetry?: () => void;
   onDismiss?: () => void;
@@ -71,26 +73,39 @@ function DownloadingCard({
   const running = dl?.status === "queued" || dl?.status === "running";
   const errored = dl?.status === "error";
   const pctDone = dl && dl.total > 0 ? Math.round((dl.done / dl.total) * 100) : 0;
+  const name = item?.title ?? title ?? dl?.title ?? "";
+  const tags = item?.tags ?? [];
   return (
     <div className="lib-card-wrap">
       <div className={`lib-card is-downloading${errored ? " is-error" : ""}`}>
         <div className="lib-card-head">
-          <h3 className="lib-card-title">{title}</h3>
-          <span className="lib-card-author">
-            {errored ? "Download failed" : running ? "Downloading…" : "Not downloaded"}
-          </span>
+          <h3 className="lib-card-title">{name}</h3>
+          {item && (item.author || item.category) && (
+            <span className="lib-card-author">
+              {item.author || "—"}
+              {item.category ? ` · ${catLabel(item.category)}` : ""}
+            </span>
+          )}
         </div>
+        {item?.synopsis && <p className="lib-card-synopsis">{item.synopsis}</p>}
+        {tags.length > 0 && (
+          <div className="lib-card-tags">
+            {tags.slice(0, 4).map((t) => (
+              <span key={t} className="lib-tag">{t}</span>
+            ))}
+          </div>
+        )}
         {running ? (
           <div className="lib-card-foot">
             <span className="lib-bar" aria-hidden>
               <span className="lib-bar-fill" style={{ width: `${pctDone}%` }} />
             </span>
             <span className="lib-card-meta">
-              {dl?.total ? `page ${dl.done}/${dl.total}` : "Queued…"}
+              {dl?.total ? `Downloading… ${dl.done}/${dl.total}` : "Queued…"}
             </span>
           </div>
         ) : (
-          <div className="lib-card-foot">
+          <div className="lib-card-foot lib-card-dl-idle">
             <span className="lib-card-meta">{errored ? dl?.error : "Tap to download this novel."}</span>
             {onRetry && (
               <button className="result-download" onClick={onRetry}>
@@ -254,7 +269,7 @@ export function LibraryPage() {
               const running = dl?.status === "queued" || dl?.status === "running";
               const downloaded = r.downloaded || dl?.status === "done";
               return (
-                <li key={r.nid} className="lib-result">
+                <li key={r.nid} className={`lib-result${!downloaded && !running ? " is-faded" : ""}`}>
                   <button
                     className="lib-result-main"
                     disabled={!downloaded}
@@ -334,7 +349,7 @@ export function LibraryPage() {
                   return (
                     <DownloadingCard
                       key={r.id}
-                      title={r.title}
+                      item={r}
                       dl={dl}
                       onRetry={() => startDownload(r.url)}
                       onDismiss={() => {

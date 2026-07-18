@@ -47,6 +47,8 @@ class ShelfItem(BaseModel):
     category: str = ""
     kind: str = "novel"  # "novel" | "text" | "doc"
     language: str = "zh"
+    downloaded: bool = True  # False while a novel is still downloading
+    url: str = ""  # progress/download key (52shuku url or browse path)
     position: int = 0
     total: int | None = None
     updated: str = ""  # last read; "" if never opened

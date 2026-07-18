@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -26,13 +26,13 @@ import annotate
 import auth
 import browse
 import dictionary
+import download_manager
 import novels
 import recommend_api
 import user_library
 import user_progress
 import user_settings
 from auth import current_user, optional_user
-from download_api import download_events
 from ids import nid_decode, nid_encode
 from schemas import (
     BrowseListing, ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut,
@@ -209,13 +209,19 @@ def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
         url = entry.get("url", id)
         record = records.get(url)
         prog = progress.get(url, {})
+        kind = entry.get("kind", "novel")
+        # A raw file / doc lives on disk already; a "novel" is only usable once
+        # its metadata record has a downloaded file (still downloading otherwise).
+        downloaded = kind != "novel" or (record is not None and record.downloaded)
         items.append(ShelfItem(
             id=id,
             title=entry.get("title") or (record.title if record else id),
             author=record.author if record else "",
             category=record.category if record else "",
-            kind=entry.get("kind", "novel"),
+            kind=kind,
             language=entry.get("language", "zh"),
+            downloaded=downloaded,
+            url=url,
             position=int(prog.get("position", 0)),
             total=prog.get("total"),
             updated=prog.get("updated", ""),
@@ -462,16 +468,19 @@ def define(word: str = Query(min_length=1)) -> DefineOut:
     return DefineOut(**dictionary.define(word))
 
 
-# ── Download (SSE) ───────────────────────────────────────────────────────────
+# ── Download queue (server-side, survives client reloads) ────────────────────
 
 @app.post("/api/download")
-def download(body: dict, _username: str = Depends(current_user)):
-    url = body.get("url", "")
-    return StreamingResponse(
-        download_events(url),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+def download(body: dict, username: str = Depends(current_user)) -> dict:
+    try:
+        return download_manager.enqueue(body.get("url", ""), username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/downloads")
+def downloads(username: str = Depends(current_user)) -> list[dict]:
+    return download_manager.snapshot(username)
 
 
 @app.get("/api/health")

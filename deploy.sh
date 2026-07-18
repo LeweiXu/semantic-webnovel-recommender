@@ -16,6 +16,12 @@ rsync -avz --delete \
   --exclude-from="$HERE/deploy-exclude.txt" \
   "$HERE/" "$SERVER:$DEST"
 
+# uvicorn holds the code in memory, so new .py files only take effect after a
+# restart. Do it here so a deploy is a single command. Restart=on-failure in the
+# unit brings it back if the new code fails to import; we surface is-active so a
+# broken deploy doesn't look successful.
 echo
-echo "Done. Restart the API on the server:"
-echo "  ssh $SERVER 'systemctl --user restart novel-api'"
+echo "Restarting novel-api on $SERVER"
+ssh "$SERVER" 'systemctl --user restart novel-api && sleep 1 && systemctl --user is-active novel-api'
+
+echo "Done."

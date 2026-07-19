@@ -58,11 +58,12 @@ def set_position(
     position: int,
     line: int | None = None,
     *,
+    anchor_version: int = 2,
     title: str | None = None,
     total: int | None = None,
     force: bool = False,
 ) -> dict:
-    """Persist a (chapter, rendered-line) bookmark.
+    """Persist a (chapter, text-anchor) bookmark.
 
     Normally monotonic: it never moves the bookmark backward (so re-reading an
     earlier chapter, or an accidental jump back, doesn't rewind progress). Pass
@@ -77,12 +78,20 @@ def set_position(
         current = (int(entry.get("position", 0)), -1 if current_line is None else int(current_line))
         target_line = None if line is None else max(0, int(line))
         target = (target_position, -1 if target_line is None else target_line)
-        if not entry or force or target > current:
+        current_version = int(entry.get("anchor_version", 1))
+        migrating = (
+            target_line is not None
+            and target_position == current[0]
+            and anchor_version > current_version
+        )
+        if not entry or force or target > current or migrating:
             entry["position"] = target_position
             if target_line is None:
                 entry.pop("line", None)
+                entry.pop("anchor_version", None)
             else:
                 entry["line"] = target_line
+                entry["anchor_version"] = max(1, int(anchor_version))
         if title is not None:
             entry["title"] = title
         if total is not None:

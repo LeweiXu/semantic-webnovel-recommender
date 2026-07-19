@@ -269,7 +269,7 @@ class UserProgressTests(unittest.TestCase):
             self.assertEqual(user_progress.get_position("bob", "novel"), 1)
             self.assertEqual(user_progress.all_progress("alice")["novel"]["position"], 5)
 
-    def test_rendered_line_is_monotonic_and_can_be_force_reset(self) -> None:
+    def test_character_anchor_is_monotonic_and_can_be_force_reset(self) -> None:
         import user_progress
 
         with tempfile.TemporaryDirectory() as directory, patch.object(
@@ -278,8 +278,25 @@ class UserProgressTests(unittest.TestCase):
             user_progress.set_position("alice", "novel", 3, 18)
             user_progress.set_position("alice", "novel", 3, 7)
             self.assertEqual(user_progress.get_entry("alice", "novel")["line"], 18)
+            self.assertEqual(user_progress.get_entry("alice", "novel")["anchor_version"], 2)
             user_progress.set_position("alice", "novel", 3, 7, force=True)
             self.assertEqual(user_progress.get_entry("alice", "novel")["line"], 7)
+
+    def test_character_anchor_replaces_legacy_rendered_line(self) -> None:
+        import json
+        import user_progress
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_progress, "PROGRESS_DIR", Path(directory)
+        ):
+            path = Path(directory) / "alice.json"
+            path.write_text(json.dumps({"novel": {"position": 3, "line": 80}}))
+            # The stable character offset may be numerically lower than the old
+            # layout-dependent line; its newer version must still win.
+            user_progress.set_position("alice", "novel", 3, 40, anchor_version=2)
+            entry = user_progress.get_entry("alice", "novel")
+            self.assertEqual(entry["line"], 40)
+            self.assertEqual(entry["anchor_version"], 2)
 
     def test_unstarted_chapter_has_no_line_bookmark(self) -> None:
         import user_progress

@@ -29,6 +29,20 @@ export function splitParagraphs(tokens: Token[]): Token[][] {
 
 function ChapterImpl({ content, pinyin, onWord }: Props) {
   const paragraphs = useMemo(() => splitParagraphs(content.tokens), [content.tokens]);
+  const positioned = useMemo(() => {
+    let offset = 0;
+    return paragraphs.map((tokens) => {
+      const start = offset;
+      const items = tokens.map((token) => {
+        const tokenStart = offset;
+        offset += token.t.length;
+        return { token, start: tokenStart };
+      });
+      const end = offset;
+      offset += 1; // canonical paragraph separator; independent of source CR/LF style
+      return { start, end, items };
+    });
+  }, [paragraphs]);
   return (
     <article className="chapter" data-idx={content.index}>
       <header className="chapter-head">
@@ -36,10 +50,20 @@ function ChapterImpl({ content, pinyin, onWord }: Props) {
         <h2 className="chapter-title">{content.title}</h2>
       </header>
       <div className={`chapter-body${pinyin ? " has-pinyin" : ""}`}>
-        {paragraphs.map((para, pi) => (
-          <p key={pi}>
-            {para.map((tok, ti) => (
-              <RubyText key={ti} token={tok} pinyin={pinyin} onWord={onWord} />
+        {positioned.map((paragraph, pi) => (
+          <p
+            key={pi}
+            data-char-start={paragraph.start}
+            data-char-end={paragraph.end}
+          >
+            {paragraph.items.map(({ token, start }, ti) => (
+              <RubyText
+                key={ti}
+                token={token}
+                startOffset={start}
+                pinyin={pinyin}
+                onWord={onWord}
+              />
             ))}
           </p>
         ))}

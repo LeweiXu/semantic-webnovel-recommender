@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../store/auth";
 
-// Debounced push of the reader's exact position (chapter + the rendered line at
-// top of the page) for the signed-in user. We send the current top whenever it
+// Debounced push of the reader's exact position (chapter + the first character
+// on the top displayed line) for the signed-in user. We send it whenever it
 // changes; the backend keeps it monotonic (never rewinds on a re-read or a jump
 // back), so sending a lower position is a harmless no-op. The "reset to here"
 // control force-writes separately.
@@ -38,7 +38,7 @@ export function useReadingProgress(nid: string | null, chapter: number, line: nu
   }, [username, nid, flush]);
 
   useEffect(() => {
-    // A null line means the chapter body has not reached the viewport top. Do
+    // A null anchor means the chapter body has not reached the viewport top. Do
     // not create a heading bookmark; opening that chapter should remain page-top.
     if (!username || !nid || chapter < 0 || line === null) return;
     latest.current = { nid, chapter, line };

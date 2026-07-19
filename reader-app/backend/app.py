@@ -345,12 +345,14 @@ def set_progress(
     line = max(0, body.line) if body.line is not None else None
     entry = user_progress.set_position(
         username, resolved.url, position, line,
+        anchor_version=body.anchor_version,
         title=resolved.title, total=total, force=body.reset,
     )
     return ProgressOut(
         ok=True,
         position=int(entry.get("position", 0)),
         line=int(entry["line"]) if entry.get("line") is not None else None,
+        anchor_version=int(entry.get("anchor_version", 2)),
         updated=entry.get("updated", ""),
     )
 
@@ -391,6 +393,7 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         total=total,
         position=position,
         line=line,
+        anchor_version=int(entry.get("anchor_version", 1 if line is not None else 2)),
         chapters=[
             ChapterStub(index=i, title=c.title)
             for i, c in enumerate(resolved.chapters)

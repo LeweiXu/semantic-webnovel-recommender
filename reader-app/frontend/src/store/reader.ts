@@ -16,11 +16,12 @@ interface ReaderState {
   // Parsed chapters cached by index for the open novel.
   chapters: Record<number, ChapterContent>;
   startPosition: number; // chapter to land on when opening
-  startLine: number | null; // null page top, 0+ rendered body line
+  startLine: number | null; // null page top; otherwise a stable character anchor
+  startAnchorVersion: number;
   furthest: number; // max chapter reached this session (drives the spine)
   current: number; // chapter under the reading line right now (drives the TOC)
   topChapter: number; // chapter at the very top of the page (for exact resume)
-  topLine: number | null; // null page top, 0+ rendered body line
+  topLine: number | null; // null page top; otherwise a stable character anchor
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
 
   // "discover" = the recommender landing page; "library" = the reading shelf;
@@ -60,6 +61,7 @@ export const useReader = create<ReaderState>((set, get) => ({
   chapters: {},
   startPosition: 0,
   startLine: null,
+  startAnchorVersion: 2,
   furthest: 0,
   current: 0,
   topChapter: 0,
@@ -97,10 +99,13 @@ export const useReader = create<ReaderState>((set, get) => ({
       //    saved line if we're opening the bookmarked chapter, else the top.
       //  - an explicit `line` (null = page top, or a saved body line): use it.
       let startLine: number | null;
+      let startAnchorVersion = 2;
       if (location === undefined) {
         startLine = novel.line;
+        startAnchorVersion = novel.anchor_version;
       } else if (location.line === undefined) {
         startLine = start === (novel.position ?? 0) ? novel.line : null;
+        startAnchorVersion = start === (novel.position ?? 0) ? novel.anchor_version : 2;
       } else {
         startLine = location.line;
       }
@@ -110,6 +115,7 @@ export const useReader = create<ReaderState>((set, get) => ({
         novel,
         startPosition: start,
         startLine,
+        startAnchorVersion,
         furthest: start,
         current: start,
         topChapter: start,
@@ -150,7 +156,7 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) => (s.chromeVisible === visible ? {} : { chromeVisible: visible })),
 
   // Settings "reset progress to here": force the bookmark back to the top of the
-  // current page (chapter + line), even if that's earlier than the furthest read.
+  // current page (chapter + text anchor), even if that's earlier than the furthest read.
   resetProgressToCurrent: async () => {
     const { novel, topChapter, topLine } = get();
     if (!novel) return;

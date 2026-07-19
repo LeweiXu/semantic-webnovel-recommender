@@ -39,30 +39,101 @@ function renderedLineCount(paragraph: HTMLElement): number {
   return Math.max(1, Math.round(paragraph.getBoundingClientRect().height / renderedLineHeight(paragraph)));
 }
 
+function offsetFromCaret(node: Node, caretOffset: number): number | null {
+  const element = node.nodeType === Node.ELEMENT_NODE
+    ? node as HTMLElement
+    : node.parentElement;
+  if (!element) return null;
+  const ruby = element.closest<HTMLElement>("[data-char-offset]");
+  if (ruby?.dataset.charOffset !== undefined) return Number(ruby.dataset.charOffset);
+  const token = element.closest<HTMLElement>("[data-char-start][data-char-length]");
+  if (!token?.dataset.charStart) return null;
+  const start = Number(token.dataset.charStart);
+  const length = Number(token.dataset.charLength);
+  return start + Math.min(Math.max(0, caretOffset), Math.max(0, length - 1));
+}
+
+function fallbackOffsetAtY(paragraph: HTMLElement, targetY: number): number | null {
+  const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest("rt")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const range = document.createRange();
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const token = node.parentElement?.closest<HTMLElement>("[data-char-start][data-char-length]");
+    if (!token?.dataset.charStart) continue;
+    const start = Number(token.dataset.charStart);
+    for (let i = 0; i < node.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const rect = range.getBoundingClientRect();
+      if (rect.top <= targetY && rect.bottom >= targetY) return start + i;
+    }
+  }
+  return null;
+}
+
+function characterOffsetAtLine(paragraph: HTMLElement, within: number): number | null {
+  const rect = paragraph.getBoundingClientRect();
+  const targetY = Math.min(
+    rect.bottom - 1,
+    rect.top + (within + 0.65) * renderedLineHeight(paragraph),
+  );
+  const targetX = rect.left + 2;
+  const caretDocument = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = caretDocument.caretPositionFromPoint?.(targetX, targetY);
+  if (position && paragraph.contains(position.offsetNode)) {
+    const offset = offsetFromCaret(position.offsetNode, position.offset);
+    if (offset !== null) return offset;
+  }
+  const caretRange = caretDocument.caretRangeFromPoint?.(targetX, targetY);
+  if (caretRange && paragraph.contains(caretRange.startContainer)) {
+    const offset = offsetFromCaret(caretRange.startContainer, caretRange.startOffset);
+    if (offset !== null) return offset;
+  }
+  return fallbackOffsetAtY(paragraph, targetY);
+}
+
 // Return null until the body itself reaches the viewport top. Once reading has
-// started, wrapped visual lines are numbered from zero across the chapter.
-function lineAtViewportTop(section: HTMLElement, root: HTMLElement): number | null {
+// started, return the stable character offset at the first displayed line.
+function anchorAtViewportTop(
+  section: HTMLElement,
+  root: HTMLElement,
+  topInset: number,
+): number | null {
   const paragraphs = section.querySelectorAll<HTMLElement>(".chapter-body > p");
-  const viewportTop = root.getBoundingClientRect().top + READING_TOP_INSET + 1;
-  let linesBefore = 0;
+  const viewportTop = root.getBoundingClientRect().top + topInset + 1;
+  let previous: HTMLElement | null = null;
 
   for (const paragraph of paragraphs) {
     const rect = paragraph.getBoundingClientRect();
     const count = renderedLineCount(paragraph);
     if (rect.bottom <= viewportTop) {
-      linesBefore += count;
+      previous = paragraph;
       continue;
     }
-    if (rect.top > viewportTop) return linesBefore === 0 ? null : linesBefore;
+    if (rect.top > viewportTop) {
+      if (previous === null) return null;
+      return Number(paragraph.dataset.charStart ?? 0);
+    }
     const within = Math.min(
       count - 1,
       Math.max(0, Math.floor((viewportTop - rect.top) / renderedLineHeight(paragraph))),
     );
-    return linesBefore + within;
+    return characterOffsetAtLine(paragraph, within);
   }
-  return linesBefore > 0 ? linesBefore - 1 : null;
+  return previous ? Math.max(0, Number(previous.dataset.charEnd ?? 1) - 1) : null;
 }
 
+// Legacy (v1) bookmarks were rendered-line numbers. Keep this only to migrate
+// an existing bookmark once; all newly written anchors are character offsets.
 function scrollTopForLine(section: HTMLElement, root: HTMLElement, line: number): number {
   const paragraphs = section.querySelectorAll<HTMLElement>(".chapter-body > p");
   let remaining = Math.max(0, line);
@@ -81,17 +152,63 @@ function scrollTopForLine(section: HTMLElement, root: HTMLElement, line: number)
   return Math.max(0, lastOffset - READING_TOP_INSET);
 }
 
+function scrollTopForAnchor(section: HTMLElement, root: HTMLElement, anchor: number): number {
+  const paragraphs = Array.from(
+    section.querySelectorAll<HTMLElement>(".chapter-body > p[data-char-start][data-char-end]"),
+  );
+  const paragraph = paragraphs.find((item) => {
+    const start = Number(item.dataset.charStart);
+    const end = Number(item.dataset.charEnd);
+    return anchor >= start && anchor <= end;
+  }) ?? paragraphs[paragraphs.length - 1];
+  if (!paragraph) return 0;
+
+  let charRect: DOMRect | null = null;
+  const exact = paragraph.querySelector<HTMLElement>(`[data-char-offset="${anchor}"]`);
+  if (exact) charRect = exact.getBoundingClientRect();
+  if (!charRect) {
+    const tokens = paragraph.querySelectorAll<HTMLElement>("[data-char-start][data-char-length]");
+    for (const token of tokens) {
+      const start = Number(token.dataset.charStart);
+      const length = Number(token.dataset.charLength);
+      if (anchor < start || anchor >= start + length) continue;
+      const text = Array.from(token.childNodes).find(
+        (node): node is Text => node.nodeType === Node.TEXT_NODE,
+      );
+      if (text && text.length > 0) {
+        const local = Math.min(text.length - 1, Math.max(0, anchor - start));
+        const range = document.createRange();
+        range.setStart(text, local);
+        range.setEnd(text, local + 1);
+        charRect = range.getBoundingClientRect();
+      }
+      break;
+    }
+  }
+  if (!charRect) charRect = paragraph.getBoundingClientRect();
+  const paragraphRect = paragraph.getBoundingClientRect();
+  const lineHeight = renderedLineHeight(paragraph);
+  const within = Math.max(0, Math.floor((charRect.top - paragraphRect.top) / lineHeight));
+  const lineTop = paragraphRect.top + within * lineHeight;
+  return Math.max(
+    0,
+    root.scrollTop + lineTop - root.getBoundingClientRect().top - READING_TOP_INSET,
+  );
+}
+
 export function ScrollReader() {
   const novel = useReader((s) => s.novel)!;
   const chapters = useReader((s) => s.chapters);
   const loadChapter = useReader((s) => s.loadChapter);
   const startPosition = useReader((s) => s.startPosition);
   const startLine = useReader((s) => s.startLine);
+  const startAnchorVersion = useReader((s) => s.startAnchorVersion);
   const current = useReader((s) => s.current);
   const setCurrent = useReader((s) => s.setCurrent);
   const setFurthest = useReader((s) => s.setFurthest);
   const setTop = useReader((s) => s.setTop);
   const setChromeVisible = useReader((s) => s.setChromeVisible);
+  const chromeVisible = useReader((s) => s.chromeVisible);
   const topChapter = useReader((s) => s.topChapter);
   const topLine = useReader((s) => s.topLine);
   const jumpTarget = useReader((s) => s.jumpTarget);
@@ -121,11 +238,12 @@ export function ScrollReader() {
   // A null pending line means page top; otherwise restore that body line.
   const pendingLand = useRef<number | null>(null);
   const pendingLine = useRef<number | null>(null);
+  const pendingAnchorVersion = useRef(2);
   // True while a land is in flight, so the scroll handler for the previous
   // window can't reinterpret the current chapter mid-jump.
   const landing = useRef(false);
 
-  // Persist the exact top-of-page position (chapter + paragraph) as we read.
+  // Persist the exact top-of-page position (chapter + stable text anchor).
   useReadingProgress(novel.slug, topChapter, topLine);
 
   const onWord = (word: string, el: HTMLElement) =>
@@ -142,14 +260,17 @@ export function ScrollReader() {
     el.getBoundingClientRect().bottom - scrollRef.current!.getBoundingClientRect().top;
 
   // Land on a chapter: mount only it (nothing above), then pin the page top.
-  // `synopsis` lands on the synopsis start; `line` restores a rendered line.
-  const landOn = (idx: number, opts: { line?: number | null } = {}) => {
+  const landOn = (
+    idx: number,
+    opts: { line?: number | null; anchorVersion?: number } = {},
+  ) => {
     landing.current = true;
     setChromeVisible(true);
     ensure(idx).then(() => {
       anchor.current = null;
       pendingLand.current = idx;
       pendingLine.current = opts.line ?? null;
+      pendingAnchorVersion.current = opts.anchorVersion ?? 2;
       setLoaded([idx]);
     });
   };
@@ -158,7 +279,7 @@ export function ScrollReader() {
   // open on the bookmark. A null line always means the top of the page; a saved
   // body line restores the exact reading position.
   useEffect(() => {
-    landOn(startPosition, { line: startLine });
+    landOn(startPosition, { line: startLine, anchorVersion: startAnchorVersion });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -182,9 +303,15 @@ export function ScrollReader() {
       const idx = pendingLand.current;
       pendingLand.current = null;
       const line = pendingLine.current;
+      const anchorVersion = pendingAnchorVersion.current;
       pendingLine.current = null;
+      pendingAnchorVersion.current = 2;
       const el = sections.current.get(idx);
-      root.scrollTop = el && line !== null ? scrollTopForLine(el, root, line) : 0;
+      root.scrollTop = el && line !== null
+        ? anchorVersion >= 2
+          ? scrollTopForAnchor(el, root, line)
+          : scrollTopForLine(el, root, line)
+        : 0;
       anchor.current = null;
       landing.current = false;
       return;
@@ -225,8 +352,8 @@ export function ScrollReader() {
       }
       const curEl = sections.current.get(cur);
 
-      // Record the chapter + rendered text line at the very top of the page —
-      // this is the exact-resume bookmark (see useReadingProgress).
+      // Record the chapter + first character of the text line at the top. Unlike
+      // a rendered line number, this anchor survives desktop/mobile reflow.
       let topC = loaded[0];
       for (const idx of loaded) {
         const el = sections.current.get(idx);
@@ -234,7 +361,9 @@ export function ScrollReader() {
       }
       let topL: number | null = null;
       const topEl = sections.current.get(topC);
-      if (topEl) topL = lineAtViewportTop(topEl, root);
+      if (topEl) {
+        topL = anchorAtViewportTop(topEl, root, chromeVisible ? READING_TOP_INSET : 0);
+      }
       setTop(topC, topL);
       writeUrl(readerPath(novel.slug, topC), true);
 
@@ -294,7 +423,17 @@ export function ScrollReader() {
       root.removeEventListener("scroll", onScroll);
       if (raf) window.cancelAnimationFrame(raf);
     };
-  }, [loaded, current, novel.nid, total, setChromeVisible, setCurrent, setFurthest, setTop]);
+  }, [
+    chromeVisible,
+    loaded,
+    current,
+    novel.nid,
+    total,
+    setChromeVisible,
+    setCurrent,
+    setFurthest,
+    setTop,
+  ]);
 
   const setRef = (idx: number) => (el: HTMLElement | null) => {
     if (el) sections.current.set(idx, el);

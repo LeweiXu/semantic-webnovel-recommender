@@ -105,6 +105,7 @@ class NovelDetail(BaseModel):
     total: int
     position: int = 0
     line: int | None = None
+    anchor_version: int = 2
     chapters: list[ChapterStub]
     kind: str = "novel"  # "novel" = metadata-backed, "text" = raw browsed file
     language: str = "zh"  # "zh" | "en" — drives pinyin/ruby on the client
@@ -121,7 +122,8 @@ class ChapterContent(BaseModel):
 
 class ProgressIn(BaseModel):
     position: int
-    line: int | None = None  # null page top; 0+ rendered body line
+    line: int | None = None  # null page top; v2 stores a stable character offset
+    anchor_version: int = 2
     reset: bool = False  # force the bookmark to (position, line), even backward
 
 
@@ -129,6 +131,7 @@ class ProgressOut(BaseModel):
     ok: bool
     position: int
     line: int | None = None
+    anchor_version: int = 2
     updated: str
 
 

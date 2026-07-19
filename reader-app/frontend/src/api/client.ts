@@ -90,6 +90,7 @@ export interface NovelDetail {
   total: number;
   position: number;
   line: number | null;
+  anchor_version: number;
   chapters: ChapterStub[];
   kind: string; // "novel" | "text"
   language: string; // "zh" | "en"
@@ -302,9 +303,15 @@ export const api = {
   discoverMap: () => getJSON<MapData>(`/api/discover/map`),
   discoverTags: (limit = 18) => getJSON<TagCount[]>(`/api/discover/tags?limit=${limit}`),
   setProgress: (nid: string, position: number, line: number | null, reset = false, keepalive = false) =>
-    postJSON<{ ok: boolean; position: number; line: number | null; updated: string }>(
+    postJSON<{
+      ok: boolean;
+      position: number;
+      line: number | null;
+      anchor_version: number;
+      updated: string;
+    }>(
       `/api/novel/${encodeId(nid)}/progress`,
-      { position, line, reset },
+      { position, line, anchor_version: 2, reset },
       { keepalive },
     ),
   register: (username: string, password: string) =>

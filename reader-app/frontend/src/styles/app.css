@@ -374,6 +374,20 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.chapter-pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.chapter-pages .btn-outline {
+  width: auto;
+  padding: 6px 10px;
+}
 
 .chapter-slot {
   scroll-margin-top: 56px;
@@ -680,7 +694,8 @@ rt.rt-hidden {
 .auth-form { display: flex; flex-direction: column; gap: 13px; }
 .auth-form label { display: flex; flex-direction: column; gap: 5px; color: var(--ink-soft); font-size: 0.78rem; }
 .auth-form input,
-.admin-command input {
+.admin-command input,
+.admin-pattern-form input {
   width: 100%;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius);
@@ -690,7 +705,8 @@ rt.rt-hidden {
   font: inherit;
 }
 .auth-form input:focus,
-.admin-command input:focus { outline: none; border-color: var(--accent); }
+.admin-command input:focus,
+.admin-pattern-form input:focus { outline: none; border-color: var(--accent); }
 .auth-form .btn-seal { align-self: flex-start; }
 .auth-signed-in p { color: var(--ink-soft); line-height: 1.5; }
 .form-error { color: var(--accent); font-size: 0.8rem; line-height: 1.4; }
@@ -709,7 +725,8 @@ rt.rt-hidden {
   color: var(--ink-soft);
   font-size: 0.76rem;
 }
-.chapter-pattern-field input {
+.chapter-pattern-field input,
+.chapter-pattern-field textarea {
   width: 100%;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius);
@@ -717,8 +734,10 @@ rt.rt-hidden {
   color: var(--ink);
   padding: 10px 12px;
   font: 0.82rem/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  resize: vertical;
 }
-.chapter-pattern-field input:focus { outline: none; border-color: var(--accent); }
+.chapter-pattern-field input:focus,
+.chapter-pattern-field textarea:focus { outline: none; border-color: var(--accent); }
 .chapter-pattern-actions {
   display: flex;
   align-items: center;
@@ -749,29 +768,63 @@ rt.rt-hidden {
   padding-left: 20px;
   font-family: var(--font-reading);
 }
-.chapter-selection-action,
-.chapter-detection-trigger {
-  position: fixed;
-  z-index: 20;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 999px;
-  background: var(--ink);
-  color: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 8px 12px;
-  font: 600 0.75rem/1.2 var(--font-ui);
-}
-.chapter-detection-trigger {
-  right: 16px;
-  bottom: 68px;
-  background: var(--surface);
-  color: var(--accent);
-}
 .admin-card { width: min(62rem, 100%); }
 .admin-command { display: flex; gap: 8px; margin-top: 18px; }
 .admin-command .btn-seal { margin: 0; flex: 0 0 auto; }
 .admin-note { margin: 8px 0 14px; color: var(--muted); font-size: 0.75rem; line-height: 1.5; }
 .admin-note code { color: var(--ink-soft); }
+.admin-patterns {
+  margin: 18px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  padding: 16px 0;
+}
+.admin-pattern-form {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.5fr) minmax(14rem, 1fr) auto auto;
+  gap: 7px;
+}
+.admin-pattern-form .btn-seal { margin: 0; }
+.admin-pattern-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  max-height: 15rem;
+  overflow: auto;
+}
+.admin-pattern-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.admin-pattern-edit {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 8px 10px;
+  text-align: left;
+}
+.admin-pattern-edit em {
+  color: var(--accent);
+  font-size: 0.64rem;
+  font-style: normal;
+}
+.admin-pattern-edit code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .admin-grid { display: grid; grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.2fr); gap: 12px; }
 .job-list { display: flex; flex-direction: column; gap: 5px; max-height: 25rem; overflow: auto; }
 .job-row {
@@ -813,6 +866,9 @@ rt.rt-hidden {
 }
 @media (max-width: 700px) {
   .admin-grid { grid-template-columns: 1fr; }
+  .admin-pattern-form { grid-template-columns: 1fr; }
+  .admin-pattern-edit { grid-template-columns: auto auto; }
+  .admin-pattern-edit code { grid-column: 1 / -1; }
   .admin-log { min-height: 14rem; }
   .account-btn { max-width: 5.5rem; }
 }

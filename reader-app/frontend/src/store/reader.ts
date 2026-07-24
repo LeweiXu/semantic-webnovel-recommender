@@ -23,6 +23,8 @@ interface ReaderState {
   topChapter: number; // chapter at the very top of the page (for exact resume)
   topLine: number | null; // null page top; otherwise a stable character anchor
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
+  showSynopsis: boolean;
+  chapterPatternOpen: boolean;
 
   // "discover" = the recommender landing page; "library" = the reading shelf;
   // "novel" = a novel's landing page (tags, synopsis, chapter list);
@@ -48,6 +50,8 @@ interface ReaderState {
   resetProgressToCurrent: () => Promise<void>;
   goToChapter: (idx: number) => void;
   clearJump: () => void;
+  openChapterPattern: () => void;
+  closeChapterPattern: () => void;
   toggleLeft: (open?: boolean) => void;
   toggleRight: (open?: boolean) => void;
   toggleToc: (open?: boolean) => void;
@@ -67,6 +71,8 @@ export const useReader = create<ReaderState>((set, get) => ({
   topChapter: 0,
   topLine: null,
   jumpTarget: null,
+  showSynopsis: false,
+  chapterPatternOpen: false,
   view: "discover",
   leftOpen: false,
   rightOpen: false,
@@ -75,7 +81,7 @@ export const useReader = create<ReaderState>((set, get) => ({
 
   setView: (v) => {
     if (v !== "read") openSequence += 1;
-    set({ view: v });
+    set({ view: v, chapterPatternOpen: false });
   },
 
   openNovel: async (nid, location, updateUrl = true) => {
@@ -86,6 +92,7 @@ export const useReader = create<ReaderState>((set, get) => ({
       chapters: {},
       novel: null,
       jumpTarget: null,
+      chapterPatternOpen: false,
       view: "read",
       chromeVisible: true,
     });
@@ -120,6 +127,12 @@ export const useReader = create<ReaderState>((set, get) => ({
         current: start,
         topChapter: start,
         topLine: startLine,
+        showSynopsis: (
+          location === undefined
+          && start === 0
+          && startLine === null
+          && Boolean(novel.synopsis)
+        ),
         loading: false,
         view: "read",
         chromeVisible: true,
@@ -181,9 +194,12 @@ export const useReader = create<ReaderState>((set, get) => ({
         tocOpen: false,
         leftOpen: false,
         chromeVisible: true,
+        showSynopsis: false,
       };
     }),
   clearJump: () => set({ jumpTarget: null }),
+  openChapterPattern: () => set({ chapterPatternOpen: true, rightOpen: false }),
+  closeChapterPattern: () => set({ chapterPatternOpen: false }),
 
   toggleLeft: (open) =>
     set((s) => ({ leftOpen: open ?? !s.leftOpen, tocOpen: false })),
@@ -192,6 +208,14 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) => ({ tocOpen: open ?? !s.tocOpen, leftOpen: false })),
   closeNovel: () => {
     openSequence += 1;
-    set({ novel: null, chapters: {}, error: null, tocOpen: false, chromeVisible: true });
+    set({
+      novel: null,
+      chapters: {},
+      error: null,
+      tocOpen: false,
+      chromeVisible: true,
+      showSynopsis: false,
+      chapterPatternOpen: false,
+    });
   },
 }));

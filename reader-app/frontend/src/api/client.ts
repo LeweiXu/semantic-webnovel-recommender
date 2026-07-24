@@ -231,6 +231,13 @@ export interface AdminCommand {
   command: string;
 }
 
+export interface GlobalChapterPattern {
+  id: string;
+  label: string;
+  pattern: string;
+  builtin: boolean;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await apiFetch(url);
   if (!res.ok) throw await responseError(res);
@@ -354,6 +361,19 @@ export const api = {
   adminHistory: () => getJSON<AdminCommand[]>("/api/admin/jobs/history"),
   deleteAdminHistory: (id: string) =>
     deleteJSON<AdminCommand[]>(`/api/admin/jobs/history/${encodeURIComponent(id)}`),
+  globalChapterPatterns: () =>
+    getJSON<GlobalChapterPattern[]>("/api/admin/chapter-patterns"),
+  addGlobalChapterPattern: (label: string, pattern: string) =>
+    postJSON<GlobalChapterPattern>("/api/admin/chapter-patterns", { label, pattern }),
+  editGlobalChapterPattern: (id: string, label: string, pattern: string) =>
+    putJSON<GlobalChapterPattern>(
+      `/api/admin/chapter-patterns/${encodeURIComponent(id)}`,
+      { label, pattern },
+    ),
+  deleteGlobalChapterPattern: (id: string) =>
+    deleteJSON<{ ok: boolean }>(
+      `/api/admin/chapter-patterns/${encodeURIComponent(id)}`,
+    ),
 };
 
 async function readEventStream(

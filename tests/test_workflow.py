@@ -152,6 +152,21 @@ First body
         self.assertIn("简介：Synopsis body.", synopsis.body)
         self.assertNotIn("标题：Test", synopsis.body)
 
+    def test_file_without_divider_is_not_one_giant_synopsis(self) -> None:
+        text = """标题：Test
+来源：https://example.test/book
+
+1重生
+正文
+2归来
+正文
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "novel.txt"
+            path.write_text(text, encoding="utf-8")
+            synopsis = local_synopsis(path)
+        self.assertIsNone(synopsis)
+
 
 class CatalogueTests(unittest.TestCase):
     def test_catalogue_urls_are_oldest_first_before_queue_direction(self) -> None:

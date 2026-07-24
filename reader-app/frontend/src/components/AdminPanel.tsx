@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { adminLogStream, api, type AdminCommand, type AdminJob } from "../api/client";
+import {
+  adminLogStream,
+  api,
+  type AdminCommand,
+  type AdminJob,
+  type GlobalChapterPattern,
+} from "../api/client";
 
 interface Props {
   onClose: () => void;
@@ -15,6 +21,11 @@ export function AdminPanel({ onClose }: Props) {
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [patterns, setPatterns] = useState<GlobalChapterPattern[]>([]);
+  const [patternId, setPatternId] = useState<string | null>(null);
+  const [patternLabel, setPatternLabel] = useState("");
+  const [patternRegex, setPatternRegex] = useState("");
+  const [savingPattern, setSavingPattern] = useState(false);
 
   const refresh = useCallback(() => {
     api.adminJobs().then(setJobs).catch((e) => setError(e?.message ?? "Could not load jobs"));
@@ -24,12 +35,19 @@ export function AdminPanel({ onClose }: Props) {
     api.adminHistory().then(setHistory).catch(() => {});
   }, []);
 
+  const refreshPatterns = useCallback(() => {
+    api.globalChapterPatterns()
+      .then(setPatterns)
+      .catch((e) => setError(e?.message ?? "Could not load chapter patterns"));
+  }, []);
+
   useEffect(() => {
     refresh();
     refreshHistory();
+    refreshPatterns();
     const timer = window.setInterval(refresh, 2500);
     return () => window.clearInterval(timer);
-  }, [refresh, refreshHistory]);
+  }, [refresh, refreshHistory, refreshPatterns]);
 
   useEffect(() => {
     if (!selected) return;
@@ -83,6 +101,49 @@ export function AdminPanel({ onClose }: Props) {
     }
   };
 
+  const savePattern = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingPattern(true);
+    setError(null);
+    try {
+      if (patternId) {
+        await api.editGlobalChapterPattern(patternId, patternLabel, patternRegex);
+      } else {
+        await api.addGlobalChapterPattern(patternLabel, patternRegex);
+      }
+      setPatternId(null);
+      setPatternLabel("");
+      setPatternRegex("");
+      refreshPatterns();
+    } catch (e: any) {
+      setError(e?.message ?? "Could not save chapter pattern");
+    } finally {
+      setSavingPattern(false);
+    }
+  };
+
+  const editPattern = (pattern: GlobalChapterPattern) => {
+    setPatternId(pattern.id);
+    setPatternLabel(pattern.label);
+    setPatternRegex(pattern.pattern);
+  };
+
+  const deletePattern = async (pattern: GlobalChapterPattern) => {
+    if (!window.confirm(`Delete the global pattern “${pattern.label}”?`)) return;
+    setError(null);
+    try {
+      await api.deleteGlobalChapterPattern(pattern.id);
+      if (patternId === pattern.id) {
+        setPatternId(null);
+        setPatternLabel("");
+        setPatternRegex("");
+      }
+      refreshPatterns();
+    } catch (e: any) {
+      setError(e?.message ?? "Could not delete chapter pattern");
+    }
+  };
+
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="Admin jobs">
       <button className="modal-scrim" onClick={onClose} aria-label="Close" />
@@ -90,7 +151,7 @@ export function AdminPanel({ onClose }: Props) {
         <div className="modal-head">
           <div>
             <div className="section-label">Administrator</div>
-            <h2 className="modal-title">Library jobs</h2>
+            <h2 className="modal-title">Library administration</h2>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
@@ -103,6 +164,66 @@ export function AdminPanel({ onClose }: Props) {
           Allowed: scrape_metadata, download, recommend. Jobs survive closing this window.
           <code> --windscribe</code> is accepted but unavailable on the server.
         </p>
+
+        <section className="admin-patterns">
+          <div className="section-label">Global chapter heading regexes</div>
+          <p className="admin-note">
+            These patterns are tried for every book unless that book has its own regex.
+          </p>
+          <form className="admin-pattern-form" onSubmit={savePattern}>
+            <input
+              value={patternLabel}
+              onChange={(event) => setPatternLabel(event.target.value)}
+              placeholder="Pattern name"
+              aria-label="Pattern name"
+            />
+            <input
+              value={patternRegex}
+              onChange={(event) => setPatternRegex(event.target.value)}
+              placeholder="^\\s*Chapter\\s+\\d+.*$"
+              spellCheck={false}
+              aria-label="Chapter heading regex"
+            />
+            <button className="btn-seal" disabled={savingPattern}>
+              {savingPattern ? "Saving…" : patternId ? "Update" : "Add"}
+            </button>
+            {patternId && (
+              <button
+                type="button"
+                className="btn-outline"
+                onClick={() => {
+                  setPatternId(null);
+                  setPatternLabel("");
+                  setPatternRegex("");
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </form>
+          <div className="admin-pattern-list">
+            {patterns.map((pattern) => (
+              <div className="admin-pattern-row" key={pattern.id}>
+                <button
+                  className="admin-pattern-edit"
+                  onClick={() => editPattern(pattern)}
+                  title="Edit pattern"
+                >
+                  <strong>{pattern.label}</strong>
+                  {pattern.builtin && <em>built-in</em>}
+                  <code>{pattern.pattern}</code>
+                </button>
+                <button
+                  className="history-remove"
+                  onClick={() => deletePattern(pattern)}
+                  aria-label={`Delete ${pattern.label}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {history.length > 0 && (
           <div className="admin-history">

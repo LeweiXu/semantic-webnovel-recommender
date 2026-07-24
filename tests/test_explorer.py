@@ -166,6 +166,18 @@ class ResolvePathTests(unittest.TestCase):
                     ["1重生", "2归来", "3终章"],
                 )
 
+    def test_first_chapter_is_removed_from_malformed_synopsis(self) -> None:
+        from webnovel.library import Chapter
+
+        synopsis = "A real synopsis.\n\n1重生\nChapter body accidentally included."
+        self.assertEqual(
+            novels.trim_synopsis_at_first_chapter(
+                synopsis,
+                [Chapter("1重生", "Chapter body accidentally included.")],
+            ),
+            "A real synopsis.",
+        )
+
 
 class ChapterPatternTests(unittest.TestCase):
     def test_patterns_are_shared_by_book_key_and_removable(self) -> None:
@@ -182,6 +194,44 @@ class ChapterPatternTests(unittest.TestCase):
         for pattern in (r"\d+title", r"^(a+)+$", r"^(a)\1$"):
             with self.subTest(pattern=pattern), self.assertRaises(ValueError):
                 chapter_patterns.validate(pattern)
+
+    def test_multiple_examples_generate_one_matching_pattern(self) -> None:
+        import re
+
+        examples = ["1重生", "2 归来", "003、终章"]
+        pattern = chapter_patterns.infer("\n".join(examples))
+        compiled = re.compile(pattern)
+        self.assertTrue(all(compiled.search(example) for example in examples))
+
+    def test_global_patterns_can_add_edit_and_delete_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            defaults = root / "defaults.json"
+            store = root / "patterns.json"
+            defaults.write_text(
+                '[{"id":"standard","label":"Standard","pattern":"^Chapter\\\\s+\\\\d+$"}]',
+                encoding="utf-8",
+            )
+            with patch.object(chapter_patterns, "PATTERNS_PATH", store), patch.object(
+                chapter_patterns, "DEFAULT_PATTERNS_PATH", defaults
+            ):
+                self.assertEqual(
+                    [item["id"] for item in chapter_patterns.list_globals()],
+                    ["standard"],
+                )
+                chapter_patterns.save_global(
+                    pattern_id="standard",
+                    label="Edited",
+                    pattern=r"^Part\s+\d+$",
+                )
+                self.assertEqual(chapter_patterns.list_globals()[0]["label"], "Edited")
+                added = chapter_patterns.save_global(label="Bare", pattern=r"^\d+\S+$")
+                self.assertIn(added["pattern"], chapter_patterns.effective_patterns())
+                self.assertTrue(chapter_patterns.remove_global("standard"))
+                self.assertNotIn(
+                    "standard",
+                    [item["id"] for item in chapter_patterns.list_globals()],
+                )
 
 
 class ShelfTests(unittest.TestCase):

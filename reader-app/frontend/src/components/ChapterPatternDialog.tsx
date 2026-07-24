@@ -8,13 +8,13 @@ import { useAuth } from "../store/auth";
 
 interface Props {
   novel: NovelDetail;
-  sample: string;
   onClose: () => void;
   onApplied: (chapter: number) => void;
 }
 
-export function ChapterPatternDialog({ novel, sample, onClose, onApplied }: Props) {
+export function ChapterPatternDialog({ novel, onClose, onApplied }: Props) {
   const user = useAuth((state) => state.user);
+  const [sample, setSample] = useState("");
   const [pattern, setPattern] = useState(novel.chapter_pattern ?? "");
   const [preview, setPreview] = useState<ChapterPatternResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export function ChapterPatternDialog({ novel, sample, onClose, onApplied }: Prop
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const runPreview = async () => {
+  const runPreview = async (useCurrentPattern: boolean) => {
     if (!user) {
       setError("Log in before changing shared chapter detection.");
       return;
@@ -36,7 +36,11 @@ export function ChapterPatternDialog({ novel, sample, onClose, onApplied }: Prop
     setBusy(true);
     setError(null);
     try {
-      const result = await api.previewChapterPattern(novel.slug, sample, pattern);
+      const result = await api.previewChapterPattern(
+        novel.slug,
+        sample,
+        useCurrentPattern ? pattern : "",
+      );
       setPattern(result.pattern);
       setPreview(result);
     } catch (reason: any) {
@@ -91,8 +95,16 @@ export function ChapterPatternDialog({ novel, sample, onClose, onApplied }: Prop
         </p>
 
         <label className="chapter-pattern-field">
-          Selected heading
-          <input value={sample} readOnly placeholder="Select a chapter title in the reader" />
+          Heading examples
+          <textarea
+            value={sample}
+            onChange={(event) => {
+              setSample(event.target.value);
+              setPreview(null);
+            }}
+            placeholder={"Paste one chapter heading per line, for example:\n1重生\n2归来\n3终章"}
+            rows={5}
+          />
         </label>
         <label className="chapter-pattern-field">
           Heading regex
@@ -102,14 +114,25 @@ export function ChapterPatternDialog({ novel, sample, onClose, onApplied }: Prop
               setPattern(event.target.value);
               setPreview(null);
             }}
-            placeholder={sample ? "Generate from selection or enter a regex" : "Select a heading first"}
+            placeholder={sample ? "Generate from examples or enter a regex" : "Paste examples above"}
             spellCheck={false}
           />
         </label>
 
         <div className="chapter-pattern-actions">
-          <button className="btn-outline" disabled={busy || (!sample && !pattern)} onClick={runPreview}>
-            {busy ? "Checking…" : pattern ? "Preview" : "Generate & preview"}
+          <button
+            className="btn-outline"
+            disabled={busy || !sample.trim()}
+            onClick={() => runPreview(false)}
+          >
+            {busy ? "Checking…" : "Generate from examples"}
+          </button>
+          <button
+            className="btn-outline"
+            disabled={busy || !pattern.trim()}
+            onClick={() => runPreview(true)}
+          >
+            Preview regex
           </button>
           <button className="btn-seal" disabled={busy || !preview} onClick={save}>
             Apply to book

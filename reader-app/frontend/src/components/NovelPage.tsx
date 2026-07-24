@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type NovelDetail } from "../api/client";
 import { useReader } from "../store/reader";
 import { currentRoute } from "../routing";
+import { PagedChapterList } from "./PagedChapterList";
 
 const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
@@ -81,19 +82,12 @@ export function NovelPage() {
 
         <section className="novel-page-section">
           <div className="dsc-section-label">Chapters</div>
-          <ul className="toc-list novel-page-toc">
-            {novel.chapters.map((c) => (
-              <li key={c.index}>
-                <button
-                  className="toc-row"
-                  onClick={() => openNovel(novel.slug, { chapter: c.index, line: null })}
-                >
-                  <span className="toc-ord">{String(c.index + 1).padStart(2, "0")}</span>
-                  <span className="toc-title">{c.title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <PagedChapterList
+            chapters={novel.chapters}
+            current={novel.position}
+            className="novel-page-toc"
+            onSelect={(chapter) => openNovel(novel.slug, { chapter, line: null })}
+          />
         </section>
       </div>
     </div>

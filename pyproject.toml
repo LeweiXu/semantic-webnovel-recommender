@@ -20,3 +20,6 @@ py-modules = ["scraper"]
 
 [tool.setuptools.packages.find]
 include = ["recsys*", "scripts*", "webnovel*"]
+
+[tool.setuptools.package-data]
+webnovel = ["*.json"]

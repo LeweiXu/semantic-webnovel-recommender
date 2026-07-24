@@ -1,0 +1,12 @@
+[
+  {
+    "id": "chinese-standard",
+    "label": "Chinese 第…章/回/卷",
+    "pattern": "^\\s*第[零一二三四五六七八九十百千万亿两〇0-9]+[章回卷节部篇折]\\s*.*$"
+  },
+  {
+    "id": "english-standard",
+    "label": "English Chapter/Part/Volume",
+    "pattern": "^\\s*(?:chapter|prologue|epilogue|interlude|part|volume|book|act)\\b.{0,98}$"
+  }
+]

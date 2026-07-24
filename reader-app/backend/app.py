@@ -33,7 +33,7 @@ import recommend_api
 import user_library
 import user_progress
 import user_settings
-from auth import current_user, optional_user
+from auth import current_user, optional_user, require_admin
 from ids import nid_decode, nid_encode
 from schemas import (
     BrowseListing, ChapterPatternIn, ChapterPatternOut, ChapterPatternPreviewIn,
@@ -395,7 +395,10 @@ def save_chapter_pattern(
     novels.invalidate(resolved.url)
     refreshed = _resolve_or_404(nid)
     result.chapters = len(refreshed.chapters)
-    selected = " ".join(body.sample.strip().splitlines()).strip()
+    selected = next(
+        (line.strip() for line in body.sample.splitlines() if line.strip()),
+        "",
+    )
     if selected:
         result.selected_chapter = next(
             (
@@ -427,6 +430,58 @@ def delete_chapter_pattern(
         chapters=len(refreshed.chapters),
         examples=[old] if old else [],
     )
+
+
+@app.get("/api/admin/chapter-patterns")
+def list_global_chapter_patterns(
+    _admin: str = Depends(require_admin),
+) -> list[dict]:
+    return chapter_patterns.list_globals()
+
+
+@app.post("/api/admin/chapter-patterns")
+def add_global_chapter_pattern(
+    body: dict,
+    _admin: str = Depends(require_admin),
+) -> dict:
+    try:
+        result = chapter_patterns.save_global(
+            label=str(body.get("label", "")),
+            pattern=str(body.get("pattern", "")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    novels.invalidate_all_chapters()
+    return result
+
+
+@app.put("/api/admin/chapter-patterns/{pattern_id}")
+def edit_global_chapter_pattern(
+    pattern_id: str,
+    body: dict,
+    _admin: str = Depends(require_admin),
+) -> dict:
+    try:
+        result = chapter_patterns.save_global(
+            pattern_id=pattern_id,
+            label=str(body.get("label", "")),
+            pattern=str(body.get("pattern", "")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    novels.invalidate_all_chapters()
+    return result
+
+
+@app.delete("/api/admin/chapter-patterns/{pattern_id}")
+def delete_global_chapter_pattern(
+    pattern_id: str,
+    _admin: str = Depends(require_admin),
+) -> dict:
+    if not chapter_patterns.remove_global(pattern_id):
+        raise HTTPException(status_code=404, detail="Pattern not found")
+    novels.invalidate_all_chapters()
+    return {"ok": True}
 
 
 @app.post("/api/novel/{nid:path}/progress", response_model=ProgressOut)

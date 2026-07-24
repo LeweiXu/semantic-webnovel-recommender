@@ -114,13 +114,37 @@ def chapters_for(url: str, record: NovelRecord) -> list[Chapter]:
             return cached
     path = local_path(record)
     pattern = chapter_patterns.get(url)
-    chapters = local_chapters(path, pattern) if path and path.exists() else []
+    chapters = (
+        local_chapters(path, pattern, chapter_patterns.effective_patterns())
+        if path and path.exists()
+        else []
+    )
     with _cache_lock:
         _chapter_cache[url] = chapters
         _chapter_cache.move_to_end(url)
         while len(_chapter_cache) > _CACHE_SIZE:
             _chapter_cache.popitem(last=False)
     return chapters
+
+
+def trim_synopsis_at_first_chapter(
+    synopsis: str,
+    chapters: list[Chapter],
+) -> str:
+    """Remove a misclassified chapter-one tail from malformed synopsis framing."""
+    if not synopsis or not chapters:
+        return synopsis
+    first_title = chapters[0].title
+    synopsis_lines = synopsis.splitlines()
+    try:
+        first_heading = next(
+            index
+            for index, line in enumerate(synopsis_lines)
+            if line.strip() == first_title
+        )
+    except StopIteration:
+        return synopsis
+    return "\n".join(synopsis_lines[:first_heading]).strip()
 
 
 def resolve(url: str) -> ResolvedNovel | None:
@@ -135,6 +159,7 @@ def resolve(url: str) -> ResolvedNovel | None:
     pattern = chapter_patterns.get(url)
     synopsis_chapter = local_synopsis(path)
     synopsis = synopsis_chapter.body if synopsis_chapter else (record.synopsis or "")
+    synopsis = trim_synopsis_at_first_chapter(synopsis, chapters)
     return ResolvedNovel(
         id=slug_for(record) or url,
         url=url,
@@ -177,7 +202,11 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         if chapters is not None:
             _chapter_cache.move_to_end(rawid)
     if chapters is None:
-        chapters = raw_chapters(path, chapter_patterns.get(rawid))
+        chapters = raw_chapters(
+            path,
+            chapter_patterns.get(rawid),
+            chapter_patterns.effective_patterns(),
+        )
         with _cache_lock:
             _chapter_cache[rawid] = chapters
             _chapter_cache.move_to_end(rawid)
@@ -233,3 +262,8 @@ def invalidate(url: str) -> None:
         _records_cache = None  # a download added/changed a metadata record
         _records_mtimes = None
         _slug_cache = None
+
+
+def invalidate_all_chapters() -> None:
+    with _cache_lock:
+        _chapter_cache.clear()

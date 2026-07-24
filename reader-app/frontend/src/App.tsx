@@ -14,6 +14,8 @@ import { TocPanel } from "./components/TocPanel";
 import { ScrollReader } from "./components/ScrollReader";
 import { DiscoverPage } from "./components/DiscoverPage";
 import { Footer } from "./components/Footer";
+import { ChapterPatternDialog } from "./components/ChapterPatternDialog";
+import { api } from "./api/client";
 import {
   ROUTE_EVENT,
   currentRoute,
@@ -46,6 +48,8 @@ export default function App() {
   const toggleToc = useReader((s) => s.toggleToc);
   const openNovel = useReader((s) => s.openNovel);
   const chromeVisible = useReader((s) => s.chromeVisible);
+  const chapterPatternOpen = useReader((s) => s.chapterPatternOpen);
+  const closeChapterPattern = useReader((s) => s.closeChapterPattern);
   const initDownloads = useDownloads((s) => s.init);
 
   // The viewport decides which settings profile is active (desktop vs mobile).
@@ -209,6 +213,21 @@ export default function App() {
       {authOpen && <AuthPanel onClose={() => setAuthOpen(false)} />}
       {adminOpen && user?.username === "lingwei" && (
         <AdminPanel onClose={() => setAdminOpen(false)} />
+      )}
+      {chapterPatternOpen && novel && view === "read" && (
+        <ChapterPatternDialog
+          novel={novel}
+          onClose={closeChapterPattern}
+          onApplied={(chapter) => {
+            closeChapterPattern();
+            void api
+              .setProgress(novel.slug, chapter, null, true)
+              .catch(() => undefined)
+              .finally(() => {
+                void openNovel(novel.slug, { chapter, line: null }, "replace");
+              });
+          }}
+        />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 from curl_cffi import requests as cffi_requests
 
 from recsys.store import NovelRecord, load_all
-from scraper import CHAPTER_RE, fetch, parse_chapter_page, parse_landing, split_into_chapters
+from scraper import fetch, parse_chapter_page, parse_landing, split_into_chapters
 from scripts.repo_paths import LIBRARY_DIR
 
 
@@ -22,8 +23,24 @@ class Chapter:
         return f"{self.title}\n\n{self.body}".strip()
 
 
-FALLBACK_BLOCK_CHARS = 6_000
+FALLBACK_BLOCK_CHARS = 2_000
 MAX_HEADING_LENGTH = 100
+DEFAULT_HEADING_PATTERNS_PATH = Path(__file__).with_name("chapter_heading_patterns.json")
+
+
+def default_heading_patterns() -> list[str]:
+    """Load the built-in detector rules from editable JSON, never Python code."""
+    try:
+        data = json.loads(DEFAULT_HEADING_PATTERNS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        str(item["pattern"])
+        for item in data
+        if isinstance(item, dict) and isinstance(item.get("pattern"), str)
+    ]
 
 
 def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
@@ -85,27 +102,27 @@ def fallback_chapters(
     ]
 
 
-def chapters_from_pattern(
+def chapters_from_patterns(
     text: str,
-    pattern: str,
+    patterns: list[str],
     *,
     include_preamble: bool = True,
 ) -> list[Chapter]:
     """Split normalized text on complete lines matched by a book-specific regex."""
-    heading_re = re.compile(pattern, re.IGNORECASE)
+    heading_res = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     heads = [
         index
         for index, line in enumerate(lines)
         if 0 < len(line.strip()) <= MAX_HEADING_LENGTH
-        and heading_re.search(line.strip()) is not None
+        and any(heading_re.search(line.strip()) is not None for heading_re in heading_res)
     ]
     if len(heads) < 2:
         return []
     chapters: list[Chapter] = []
     preamble = "\n".join(lines[: heads[0]]).strip()
     if preamble and include_preamble:
-        chapters.extend(fallback_chapters(preamble))
+        chapters.extend(bound_chapters([Chapter("Front matter", preamble)]))
     for order, start in enumerate(heads):
         end = heads[order + 1] if order + 1 < len(heads) else len(lines)
         title = lines[start].strip()
@@ -114,24 +131,43 @@ def chapters_from_pattern(
     return bound_chapters(chapters)
 
 
-def local_chapters(path: Path, heading_pattern: str | None = None) -> list[Chapter]:
+def chapters_from_pattern(
+    text: str,
+    pattern: str,
+    *,
+    include_preamble: bool = True,
+) -> list[Chapter]:
+    return chapters_from_patterns(
+        text,
+        [pattern],
+        include_preamble=include_preamble,
+    )
+
+
+def local_chapters(
+    path: Path,
+    heading_pattern: str | None = None,
+    heading_patterns: list[str] | None = None,
+) -> list[Chapter]:
     text = path.read_text(encoding="utf-8", errors="replace")
     source_index = text.find("\n来源：")
     body = text[source_index + 1:] if source_index >= 0 else text
     divider = "═" * 10
-    if heading_pattern:
-        # Generated downloads place visual divider rows around chapters. They
-        # are storage framing, not reader content.
-        custom_body = "\n".join(
-            line for line in body.splitlines() if divider not in line
-        )
-        custom = chapters_from_pattern(
-            custom_body,
-            heading_pattern,
-            include_preamble=False,
-        )
-        if custom:
-            return custom
+    # Generated downloads place visual divider rows around chapters. They are
+    # storage framing, not reader content.
+    custom_body = "\n".join(
+        line for line in body.splitlines() if divider not in line
+    )
+    patterns = [heading_pattern] if heading_pattern else (
+        heading_patterns if heading_patterns is not None else default_heading_patterns()
+    )
+    detected_chapters = chapters_from_patterns(
+        custom_body,
+        patterns,
+        include_preamble=False,
+    )
+    if detected_chapters:
+        return detected_chapters
     parts = body.split("\n")
     pages: list[str] = []
     collecting = False
@@ -148,19 +184,6 @@ def local_chapters(path: Path, heading_pattern: str | None = None) -> list[Chapt
     if current:
         pages.append("\n".join(current))
 
-    split = split_into_chapters(pages)
-    detected = any(header for header, _content in split)
-    chapters = (
-        [
-            Chapter(header or f"Section {index}", content)
-            for index, (header, content) in enumerate(split, 1)
-            if header or content.strip()
-        ]
-        if detected
-        else []
-    )
-    if detected and chapters:
-        return bound_chapters(chapters)
     if pages:
         return fallback_chapters("\n\n".join(page for page in pages if page.strip()))
 
@@ -186,6 +209,11 @@ def local_synopsis(path: Path) -> Chapter | None:
     if start < 0:
         return None
     end = text.find(divider, start)
+    if end < 0:
+        # Without a generated divider there is no reliable synopsis boundary.
+        # Treating the rest of the file as synopsis bypasses chapter windowing
+        # and can send an entire novel to the frontend.
+        return None
     raw = text[start:end if end >= 0 else None].strip()
     if not raw:
         return None
@@ -204,18 +232,6 @@ def local_synopsis(path: Path) -> Chapter | None:
 # preamble). local_chapters/local_synopsis above stay for downloaded 52shuku
 # files, which are always UTF-8 with the generated preamble + "═" dividers.
 
-# A chapter-heading line: a Chinese "第N章/回/卷…" marker, or an English
-# "Chapter/Prologue/…" line. Kept short (matched only on lines < 100 chars) so a
-# sentence that merely starts with "Part" doesn't get treated as a heading.
-_RAW_HEADING_RE = re.compile(
-    r"^\s*(?:"
-    r"第[零一二三四五六七八九十百千万亿两0-9]+[章回卷节部篇折]"
-    r"|(?:chapter|prologue|epilogue|interlude|part|volume|book|act)\b"
-    r")",
-    re.IGNORECASE,
-)
-
-
 def read_text_smart(path: Path) -> str:
     """Decode a text file, trying the encodings these files actually use.
 
@@ -232,38 +248,22 @@ def read_text_smart(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _is_heading(line: str) -> bool:
-    stripped = line.strip()
-    return 0 < len(stripped) <= 100 and _RAW_HEADING_RE.match(stripped) is not None
-
-
-def raw_chapters(path: Path, heading_pattern: str | None = None) -> list[Chapter]:
+def raw_chapters(
+    path: Path,
+    heading_pattern: str | None = None,
+    heading_patterns: list[str] | None = None,
+) -> list[Chapter]:
     """Split a raw .txt file into chapters by heading lines.
 
     Works for both Chinese (第N章) and English (Chapter N) headings. Files with
     no detectable headings come back as bounded virtual ``Part`` chapters.
     """
     text = read_text_smart(path)
-    if heading_pattern:
-        custom = chapters_from_pattern(text, heading_pattern)
-        if custom:
-            return custom
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    heads = [i for i, line in enumerate(lines) if _is_heading(line)]
-    if len(heads) < 2:
-        body = text.strip()
-        return fallback_chapters(body)
-
-    chapters: list[Chapter] = []
-    preamble = "\n".join(lines[: heads[0]]).strip()
-    if preamble:
-        chapters.append(Chapter("Front matter", preamble))
-    for order, start in enumerate(heads):
-        end = heads[order + 1] if order + 1 < len(heads) else len(lines)
-        title = lines[start].strip()
-        content = "\n".join(lines[start + 1 : end]).strip()
-        chapters.append(Chapter(title, content))
-    return bound_chapters(chapters)
+    patterns = [heading_pattern] if heading_pattern else (
+        heading_patterns if heading_patterns is not None else default_heading_patterns()
+    )
+    chapters = chapters_from_patterns(text, patterns)
+    return chapters if chapters else fallback_chapters(text)
 
 
 def detect_language(sample: str) -> str:

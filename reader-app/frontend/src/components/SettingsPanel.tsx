@@ -13,7 +13,9 @@ export function SettingsPanel() {
   const set = useSettings((st) => st.set);
   const reset = useSettings((st) => st.reset);
   const novel = useReader((st) => st.novel);
+  const view = useReader((st) => st.view);
   const resetProgress = useReader((st) => st.resetProgressToCurrent);
+  const openChapterPattern = useReader((st) => st.openChapterPattern);
   // Pinyin controls are meaningless for an English novel — hide them while one
   // is open. They stay visible everywhere else (and for Chinese novels).
   const showPinyin = novel?.language !== "en";
@@ -167,6 +169,20 @@ export function SettingsPanel() {
           <label className="setting-label">Progress</label>
           <button className="btn-outline" onClick={() => resetProgress()}>
             Reset Progress To Current
+          </button>
+        </div>
+      )}
+
+      {novel && view === "read" && (
+        <div className="setting setting-block">
+          <label className="setting-label">
+            Book structure
+            <span className="setting-value">
+              {novel.chapter_pattern ? "Custom" : novel.chapter_mode}
+            </span>
+          </label>
+          <button className="btn-outline" onClick={openChapterPattern}>
+            Chapter Heading Regex
           </button>
         </div>
       )}

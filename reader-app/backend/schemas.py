@@ -111,6 +111,7 @@ class NovelDetail(BaseModel):
     language: str = "zh"  # "zh" | "en" — drives pinyin/ruby on the client
     chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
     chapter_pattern: str | None = None
+    chapter_examples: list[str] = []
 
 
 class ChapterContent(BaseModel):

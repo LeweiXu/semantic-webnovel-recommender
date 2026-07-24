@@ -14,7 +14,7 @@ interface Props {
 
 export function ChapterPatternDialog({ novel, onClose, onApplied }: Props) {
   const user = useAuth((state) => state.user);
-  const [sample, setSample] = useState("");
+  const [sample, setSample] = useState(novel.chapter_examples.join("\n"));
   const [pattern, setPattern] = useState(novel.chapter_pattern ?? "");
   const [preview, setPreview] = useState<ChapterPatternResult | null>(null);
   const [busy, setBusy] = useState(false);

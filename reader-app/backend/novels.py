@@ -57,6 +57,7 @@ class ResolvedNovel:
     language: str = "zh"
     chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
     chapter_pattern: str | None = None
+    chapter_examples: list[str] | None = None
     record: NovelRecord | None = None
 
 
@@ -173,6 +174,7 @@ def resolve(url: str) -> ResolvedNovel | None:
         language="zh",
         chapter_mode="custom" if pattern else _chapter_mode(chapters),
         chapter_pattern=pattern,
+        chapter_examples=chapter_patterns.get_examples(url),
         record=record,
     )
 
@@ -228,6 +230,7 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         language=detect_language(sample),
         chapter_mode="custom" if pattern else _chapter_mode(chapters),
         chapter_pattern=pattern,
+        chapter_examples=chapter_patterns.get_examples(rawid),
         record=None,
     )
 

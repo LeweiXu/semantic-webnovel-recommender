@@ -15,6 +15,7 @@ PATTERNS_PATH = DATA_DIR / "chapter_patterns.json"
 DEFAULT_PATTERNS_PATH = Path(__file__).resolve().parents[2] / "webnovel" / "chapter_heading_patterns.json"
 MAX_PATTERN_LENGTH = 240
 MAX_SAMPLE_LENGTH = 100
+MAX_EXAMPLES = 20
 _lock = threading.Lock()
 
 
@@ -66,7 +67,40 @@ def _save(data: dict) -> None:
 def get(book_key: str) -> str | None:
     with _lock:
         value = _load()["books"].get(book_key)
-        return str(value) if isinstance(value, str) else None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("pattern"), str):
+            return value["pattern"]
+        return None
+
+
+def get_examples(book_key: str) -> list[str]:
+    """Return saved heading examples, while accepting legacy string entries."""
+    with _lock:
+        value = _load()["books"].get(book_key)
+    if not isinstance(value, dict) or not isinstance(value.get("examples"), list):
+        return []
+    return [
+        item.strip()
+        for item in value["examples"]
+        if isinstance(item, str) and 0 < len(item.strip()) <= MAX_SAMPLE_LENGTH
+    ][:MAX_EXAMPLES]
+
+
+def normalize_examples(examples: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for example in examples:
+        value = example.strip()
+        if not value or value in normalized:
+            continue
+        if len(value) > MAX_SAMPLE_LENGTH:
+            raise ValueError(
+                f"Chapter headings must be at most {MAX_SAMPLE_LENGTH} characters"
+            )
+        normalized.append(value)
+    if len(normalized) > MAX_EXAMPLES:
+        raise ValueError(f"Use at most {MAX_EXAMPLES} heading examples")
+    return normalized
 
 
 def validate(pattern: str) -> str:
@@ -92,11 +126,27 @@ def validate(pattern: str) -> str:
     return pattern
 
 
-def set_pattern(book_key: str, pattern: str) -> str:
+def set_pattern(
+    book_key: str,
+    pattern: str,
+    examples: list[str] | None = None,
+) -> str:
     pattern = validate(pattern)
     with _lock:
         data = _load()
-        data["books"][book_key] = pattern
+        existing = data["books"].get(book_key)
+        if examples is None:
+            stored_examples = (
+                existing.get("examples", [])
+                if isinstance(existing, dict)
+                else []
+            )
+        else:
+            stored_examples = normalize_examples(examples)
+        data["books"][book_key] = {
+            "pattern": pattern,
+            "examples": stored_examples,
+        }
         _save(data)
     return pattern
 
@@ -143,8 +193,8 @@ def infer(sample: str) -> str:
     examples = [line.strip() for line in sample.splitlines() if line.strip()]
     if not examples:
         raise ValueError("Enter at least one chapter heading example")
-    if len(examples) > 20:
-        raise ValueError("Use at most 20 heading examples")
+    if len(examples) > MAX_EXAMPLES:
+        raise ValueError(f"Use at most {MAX_EXAMPLES} heading examples")
     patterns = list(dict.fromkeys(_infer_one(example) for example in examples))
     if len(patterns) == 1:
         result = patterns[0]

@@ -76,6 +76,17 @@ class RawChapterTests(unittest.TestCase):
             chapters = raw_chapters(path, pattern)
         self.assertEqual([chapter.title for chapter in chapters], ["1重生", "2归来", "3终章"])
 
+    def test_detected_chapters_are_not_split_into_fake_continuations(self) -> None:
+        body = "甲" * (FALLBACK_BLOCK_CHARS * 2 + 17)
+        text = f"1重生\n{body}\n2归来\n正文二"
+        pattern = chapter_patterns.infer("1重生")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbered.txt"
+            path.write_text(text, encoding="utf-8")
+            chapters = raw_chapters(path, pattern)
+        self.assertEqual([chapter.title for chapter in chapters], ["1重生", "2归来"])
+        self.assertEqual(chapters[0].body, body)
+
     def test_empty_file_has_no_chapters(self) -> None:
         self.assertEqual(self._chapters("   \n  "), [])
 
@@ -189,6 +200,29 @@ class ChapterPatternTests(unittest.TestCase):
             self.assertEqual(chapter_patterns.get("GL/book.txt"), pattern)
             self.assertTrue(chapter_patterns.remove("GL/book.txt"))
             self.assertIsNone(chapter_patterns.get("GL/book.txt"))
+
+    def test_heading_examples_are_saved_and_legacy_entries_still_load(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            chapter_patterns, "PATTERNS_PATH", Path(directory) / "patterns.json"
+        ):
+            pattern = r"^\s*\d+\S.*$"
+            chapter_patterns.set_pattern(
+                "GL/book.txt",
+                pattern,
+                ["1重生", "2归来", "1重生"],
+            )
+            self.assertEqual(
+                chapter_patterns.get_examples("GL/book.txt"),
+                ["1重生", "2归来"],
+            )
+
+            chapter_patterns.PATTERNS_PATH.write_text(
+                '{"version":2,"books":{"old.txt":"^Chapter"},"globals":{},'
+                '"deleted_defaults":[]}',
+                encoding="utf-8",
+            )
+            self.assertEqual(chapter_patterns.get("old.txt"), "^Chapter")
+            self.assertEqual(chapter_patterns.get_examples("old.txt"), [])
 
     def test_unsafe_or_unanchored_patterns_are_rejected(self) -> None:
         for pattern in (r"\d+title", r"^(a+)+$", r"^(a)\1$"):

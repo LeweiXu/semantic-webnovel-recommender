@@ -389,7 +389,11 @@ def save_chapter_pattern(
     try:
         pattern = chapter_patterns.validate(body.pattern)
         result = _pattern_result(resolved, pattern)
-        chapter_patterns.set_pattern(resolved.url, pattern)
+        chapter_patterns.set_pattern(
+            resolved.url,
+            pattern,
+            body.sample.splitlines(),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     novels.invalidate(resolved.url)
@@ -551,6 +555,7 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         language=resolved.language,
         chapter_mode=resolved.chapter_mode,
         chapter_pattern=resolved.chapter_pattern,
+        chapter_examples=resolved.chapter_examples or [],
     )
 
 

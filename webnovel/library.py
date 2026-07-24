@@ -69,26 +69,6 @@ def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
     return blocks
 
 
-def bound_chapters(
-    chapters: list[Chapter],
-    limit: int = FALLBACK_BLOCK_CHARS,
-) -> list[Chapter]:
-    """Guarantee no API chapter can expand into an unbounded reader DOM."""
-    bounded: list[Chapter] = []
-    for chapter in chapters:
-        blocks = _text_blocks(chapter.body, limit)
-        if not blocks:
-            bounded.append(chapter)
-            continue
-        if len(blocks) <= 1:
-            bounded.append(Chapter(chapter.title, blocks[0]))
-            continue
-        for index, block in enumerate(blocks, 1):
-            title = chapter.title if index == 1 else f"{chapter.title} · {index}"
-            bounded.append(Chapter(title, block))
-    return bounded
-
-
 def fallback_chapters(
     text: str,
     limit: int = FALLBACK_BLOCK_CHARS,
@@ -122,13 +102,17 @@ def chapters_from_patterns(
     chapters: list[Chapter] = []
     preamble = "\n".join(lines[: heads[0]]).strip()
     if preamble and include_preamble:
-        chapters.extend(bound_chapters([Chapter("Front matter", preamble)]))
+        chapters.append(Chapter("Front matter", preamble))
     for order, start in enumerate(heads):
         end = heads[order + 1] if order + 1 < len(heads) else len(lines)
         title = lines[start].strip()
         content = "\n".join(lines[start + 1 : end]).strip()
         chapters.append(Chapter(title, content))
-    return bound_chapters(chapters)
+    # Only chapterless fallback text is divided into fixed-size virtual parts.
+    # Splitting already-detected chapters creates fake duplicate TOC entries and
+    # arbitrary mid-chapter boundaries whenever a real chapter exceeds the
+    # fallback block size.
+    return chapters
 
 
 def chapters_from_pattern(

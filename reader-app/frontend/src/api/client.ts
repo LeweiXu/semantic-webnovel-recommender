@@ -96,6 +96,7 @@ export interface NovelDetail {
   language: string; // "zh" | "en"
   chapter_mode: "detected" | "fallback" | "custom";
   chapter_pattern: string | null;
+  chapter_examples: string[];
 }
 
 export interface ChapterPatternResult {

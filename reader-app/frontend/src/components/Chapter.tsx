@@ -8,6 +8,11 @@ interface Props {
   onWord: (word: string, el: HTMLElement) => void;
 }
 
+// Backend blocks are normally smaller than this. If an old/malformed API ever
+// returns a whole book as one chapter, collapse it to plain paragraph nodes
+// instead of creating ruby/word elements for every character.
+const MAX_RICH_CHAPTER_CHARS = 20_000;
+
 // Rebuild paragraphs from the flat token stream: "\n" tokens are paragraph
 // boundaries. Blank runs collapse so spacing is governed by CSS, not the source.
 export function splitParagraphs(tokens: Token[]): Token[][] {
@@ -29,6 +34,10 @@ export function splitParagraphs(tokens: Token[]): Token[][] {
 
 function ChapterImpl({ content, pinyin, onWord }: Props) {
   const paragraphs = useMemo(() => splitParagraphs(content.tokens), [content.tokens]);
+  const rich = useMemo(
+    () => content.tokens.reduce((total, token) => total + token.t.length, 0) <= MAX_RICH_CHAPTER_CHARS,
+    [content.tokens],
+  );
   const positioned = useMemo(() => {
     let offset = 0;
     return paragraphs.map((tokens) => {
@@ -56,15 +65,25 @@ function ChapterImpl({ content, pinyin, onWord }: Props) {
             data-char-start={paragraph.start}
             data-char-end={paragraph.end}
           >
-            {paragraph.items.map(({ token, start }, ti) => (
-              <RubyText
-                key={ti}
-                token={token}
-                startOffset={start}
-                pinyin={pinyin}
-                onWord={onWord}
-              />
-            ))}
+            {rich ? (
+              paragraph.items.map(({ token, start }, ti) => (
+                <RubyText
+                  key={ti}
+                  token={token}
+                  startOffset={start}
+                  pinyin={pinyin}
+                  onWord={onWord}
+                />
+              ))
+            ) : (
+              <span
+                className="plain"
+                data-char-start={paragraph.start}
+                data-char-length={paragraph.end - paragraph.start}
+              >
+                {paragraph.items.map(({ token }) => token.t).join("")}
+              </span>
+            )}
           </p>
         ))}
       </div>

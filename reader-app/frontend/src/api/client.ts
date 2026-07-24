@@ -94,6 +94,16 @@ export interface NovelDetail {
   chapters: ChapterStub[];
   kind: string; // "novel" | "text"
   language: string; // "zh" | "en"
+  chapter_mode: "detected" | "fallback" | "custom";
+  chapter_pattern: string | null;
+}
+
+export interface ChapterPatternResult {
+  pattern: string;
+  matches: number;
+  chapters: number;
+  examples: string[];
+  selected_chapter: number;
 }
 
 export type BrowseKind = "dir" | "text" | "doc" | "other";
@@ -287,6 +297,20 @@ export const api = {
   chapter: (nid: string, idx: number, annotate: boolean) =>
     getJSON<ChapterContent>(
       `/api/novel/${encodeId(nid)}/chapter/${idx}?annotate=${annotate ? 1 : 0}`,
+    ),
+  previewChapterPattern: (nid: string, sample: string, pattern = "") =>
+    postJSON<ChapterPatternResult>(
+      `/api/novel/${encodeId(nid)}/chapter-pattern/preview`,
+      { sample, pattern },
+    ),
+  saveChapterPattern: (nid: string, pattern: string, sample = "") =>
+    putJSON<ChapterPatternResult>(
+      `/api/novel/${encodeId(nid)}/chapter-pattern`,
+      { pattern, sample },
+    ),
+  deleteChapterPattern: (nid: string) =>
+    deleteJSON<ChapterPatternResult>(
+      `/api/novel/${encodeId(nid)}/chapter-pattern`,
     ),
   define: (word: string) =>
     getJSON<DefineOut>(`/api/define?word=${encodeURIComponent(word)}`),

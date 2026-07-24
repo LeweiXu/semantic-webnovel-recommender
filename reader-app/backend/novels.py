@@ -14,11 +14,12 @@ from pathlib import Path
 from recsys.store import NovelRecord, load_all
 from webnovel.library import (
     Chapter, detect_language, local_chapters, local_path, local_synopsis,
-    raw_chapters,
+    raw_chapters, read_text_smart,
 )
 from scripts.repo_paths import LIBRARY_DIR
 
 import browse
+import chapter_patterns
 
 # Small LRU of parsed chapter lists keyed by novel url. A median novel is
 # ~300k chars; parsing it on every chapter request would be wasteful, so keep a
@@ -54,6 +55,8 @@ class ResolvedNovel:
     chapters: list[Chapter]
     kind: str = "novel"  # "novel" = metadata-backed, "text" = raw .txt
     language: str = "zh"
+    chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
+    chapter_pattern: str | None = None
     record: NovelRecord | None = None
 
 
@@ -110,7 +113,8 @@ def chapters_for(url: str, record: NovelRecord) -> list[Chapter]:
             _chapter_cache.move_to_end(url)
             return cached
     path = local_path(record)
-    chapters = local_chapters(path) if path and path.exists() else []
+    pattern = chapter_patterns.get(url)
+    chapters = local_chapters(path, pattern) if path and path.exists() else []
     with _cache_lock:
         _chapter_cache[url] = chapters
         _chapter_cache.move_to_end(url)
@@ -128,6 +132,7 @@ def resolve(url: str) -> ResolvedNovel | None:
     if path is None or not path.exists():
         return None
     chapters = chapters_for(url, record)
+    pattern = chapter_patterns.get(url)
     synopsis_chapter = local_synopsis(path)
     synopsis = synopsis_chapter.body if synopsis_chapter else (record.synopsis or "")
     return ResolvedNovel(
@@ -141,6 +146,8 @@ def resolve(url: str) -> ResolvedNovel | None:
         chapters=chapters,
         kind="novel",
         language="zh",
+        chapter_mode="custom" if pattern else _chapter_mode(chapters),
+        chapter_pattern=pattern,
         record=record,
     )
 
@@ -170,7 +177,7 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         if chapters is not None:
             _chapter_cache.move_to_end(rawid)
     if chapters is None:
-        chapters = raw_chapters(path)
+        chapters = raw_chapters(path, chapter_patterns.get(rawid))
         with _cache_lock:
             _chapter_cache[rawid] = chapters
             _chapter_cache.move_to_end(rawid)
@@ -178,6 +185,7 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
                 _chapter_cache.popitem(last=False)
 
     sample = "\n".join(ch.text() for ch in chapters[:1])[:2000]
+    pattern = chapter_patterns.get(rawid)
     return ResolvedNovel(
         id=rawid,
         url=rawid,
@@ -189,8 +197,32 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         chapters=chapters,
         kind="text",
         language=detect_language(sample),
+        chapter_mode="custom" if pattern else _chapter_mode(chapters),
+        chapter_pattern=pattern,
         record=None,
     )
+
+
+def _chapter_mode(chapters: list[Chapter]) -> str:
+    return (
+        "fallback"
+        if chapters and all(chapter.title.startswith("Part ") for chapter in chapters)
+        else "detected"
+    )
+
+
+def source_text(resolved: ResolvedNovel) -> str:
+    """Return the original book text used to preview a custom heading regex."""
+    if resolved.record is not None:
+        path = local_path(resolved.record)
+    else:
+        try:
+            path = browse.safe_join(resolved.id)
+        except ValueError:
+            path = None
+    if path is None or not path.is_file():
+        return ""
+    return read_text_smart(path)
 
 
 def invalidate(url: str) -> None:

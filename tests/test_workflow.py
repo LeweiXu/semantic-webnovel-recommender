@@ -80,6 +80,54 @@ Second body
         self.assertEqual([chapter.title for chapter in chapters], ["第1章 One", "第2章 Two"])
         self.assertEqual(chapters[0].body, "First body")
 
+    def test_saved_file_custom_pattern_removes_storage_dividers(self) -> None:
+        text = """标题：Test
+来源：https://example.test/book
+
+Synopsis
+
+════════════════════════════════════════
+
+1重生
+
+First body
+
+════════════════════════════════════════
+
+2归来
+
+Second body
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "novel.txt"
+            path.write_text(text, encoding="utf-8")
+            chapters = local_chapters(path, r"^\s*\d+\S.*$")
+        self.assertEqual([chapter.title for chapter in chapters], ["1重生", "2归来"])
+        self.assertNotIn("═", chapters[0].body)
+
+    def test_saved_file_without_detected_titles_uses_virtual_parts(self) -> None:
+        text = """标题：Test
+来源：https://example.test/book
+
+Synopsis
+
+════════════════════════════════════════
+
+1重生
+First body
+
+════════════════════════════════════════
+
+2归来
+Second body
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "novel.txt"
+            path.write_text(text, encoding="utf-8")
+            chapters = local_chapters(path)
+        self.assertTrue(chapters)
+        self.assertTrue(all(chapter.title.startswith("Part ") for chapter in chapters))
+
     def test_saved_file_extracts_synopsis_after_preamble(self) -> None:
         text = """标题：Test
 作者：A

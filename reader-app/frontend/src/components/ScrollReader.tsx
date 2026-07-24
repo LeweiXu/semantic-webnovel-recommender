@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useReader } from "../store/reader";
 import { useActiveSettings } from "../store/settings";
+import { api } from "../api/client";
 import { useReadingProgress } from "../hooks/useProgress";
 import { Chapter, splitParagraphs } from "./Chapter";
+import { ChapterPatternDialog } from "./ChapterPatternDialog";
 import { RubyText } from "./RubyText";
 import { DefinitionPopup, type PopupTarget } from "./DefinitionPopup";
 import { readerPath, writeUrl } from "../routing";
@@ -213,6 +215,7 @@ export function ScrollReader() {
   const topLine = useReader((s) => s.topLine);
   const jumpTarget = useReader((s) => s.jumpTarget);
   const clearJump = useReader((s) => s.clearJump);
+  const openNovel = useReader((s) => s.openNovel);
   const active = useActiveSettings();
   // English novels have no pinyin/ruby (tokens come back plain), so force both
   // off regardless of the setting — keeps the extra ruby line-height off too.
@@ -226,6 +229,11 @@ export function ScrollReader() {
   // content cached before it is added, so heights never shift after mount.
   const [loaded, setLoaded] = useState<number[]>([]);
   const [popup, setPopup] = useState<PopupTarget | null>(null);
+  const [headingSelection, setHeadingSelection] = useState<{
+    text: string;
+    rect: DOMRect;
+  } | null>(null);
+  const [patternOpen, setPatternOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sections = useRef<Map<number, HTMLElement>>(new Map());
@@ -248,6 +256,52 @@ export function ScrollReader() {
 
   const onWord = (word: string, el: HTMLElement) =>
     setPopup({ word, rect: el.getBoundingClientRect() });
+
+  const captureHeadingSelection = () => {
+    if (patternOpen) return;
+    const root = scrollRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setHeadingSelection(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+    const fragment = range.cloneContents();
+    fragment.querySelectorAll("rt").forEach((node) => node.remove());
+    const text = (fragment.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 100) {
+      setHeadingSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    setPopup(null);
+    setHeadingSelection({ text, rect });
+  };
+
+  // Mobile selection handles often settle after touchend. selectionchange makes
+  // the action appear once the browser has finalized the selected heading.
+  useEffect(() => {
+    let timer = 0;
+    const onSelectionChange = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(captureHeadingSelection, 40);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.clearTimeout(timer);
+    };
+    // Reset the listener when the dialog opens so selections inside the form
+    // are never mistaken for book headings.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novel.nid, patternOpen]);
+
+  const clearTextSelection = () => {
+    window.getSelection()?.removeAllRanges();
+    setHeadingSelection(null);
+  };
 
   // Fetch a chapter's annotated body (deduped by the store cache).
   const ensure = (idx: number) =>
@@ -441,7 +495,13 @@ export function ScrollReader() {
   };
 
   return (
-    <div className="scroll-root" ref={scrollRef}>
+    <div
+      className="scroll-root"
+      ref={scrollRef}
+      onMouseUp={() => window.setTimeout(captureHeadingSelection, 0)}
+      onTouchEnd={() => window.setTimeout(captureHeadingSelection, 0)}
+      onKeyUp={captureHeadingSelection}
+    >
       {loaded.length === 0 ? (
         <div className="stage-note">Opening…</div>
       ) : (
@@ -486,7 +546,63 @@ export function ScrollReader() {
           )}
         </div>
       )}
+      {novel.chapter_mode !== "detected" && !patternOpen && (
+        <button
+          className="chapter-detection-trigger"
+          onClick={() => setPatternOpen(true)}
+        >
+          {novel.chapter_mode === "fallback"
+            ? "Chapters not detected · Fix"
+            : "Custom chapter regex · Edit"}
+        </button>
+      )}
+      {headingSelection && !patternOpen && (
+        <button
+          className="chapter-selection-action"
+          style={{
+            left: Math.max(10, Math.min(
+              headingSelection.rect.left,
+              window.innerWidth - 190,
+            )),
+            top: Math.max(10, Math.min(
+              headingSelection.rect.bottom + 8,
+              window.innerHeight - 52,
+            )),
+          }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setPatternOpen(true)}
+        >
+          Mark as chapter heading
+        </button>
+      )}
       <DefinitionPopup target={popup} onClose={() => setPopup(null)} />
+      {patternOpen && (
+        <ChapterPatternDialog
+          novel={novel}
+          sample={headingSelection?.text ?? ""}
+          onClose={() => {
+            setPatternOpen(false);
+            clearTextSelection();
+          }}
+          onApplied={(chapter) => {
+            setPatternOpen(false);
+            clearTextSelection();
+            // The chapter index space just changed. Force this user's bookmark
+            // to the selected heading before reopening so the old virtual-block
+            // index cannot override the new location.
+            void api
+              .setProgress(novel.slug, chapter, null, true)
+              .catch(() => undefined)
+              .finally(() => {
+                void openNovel(
+                  novel.slug,
+                  { chapter, line: null },
+                  "replace",
+                );
+              });
+          }}
+        />
+      )}
     </div>
   );
 }

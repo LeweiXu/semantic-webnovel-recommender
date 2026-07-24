@@ -26,7 +26,12 @@ function RubyTextImpl({ token, pinyin, onWord, startOffset }: Props) {
   const chars = Array.from(t);
   const readings = py.split(" ");
   let consumed = 0;
-  const handle = (e: React.MouseEvent<HTMLElement>) => onWord(t, e.currentTarget);
+  const handle = (e: React.MouseEvent<HTMLElement>) => {
+    // Drag-selecting a chapter heading should open the chapter-pattern action,
+    // not a dictionary popup for the word under the pointer.
+    if (!window.getSelection()?.isCollapsed) return;
+    onWord(t, e.currentTarget);
+  };
 
   return (
     <span

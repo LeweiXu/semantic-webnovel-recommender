@@ -13,9 +13,15 @@ from unittest.mock import patch
 BACKEND_DIR = Path(__file__).resolve().parents[1] / "reader-app" / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
-from webnovel.library import detect_language, raw_chapters, read_text_smart
+from webnovel.library import (
+    FALLBACK_BLOCK_CHARS,
+    detect_language,
+    raw_chapters,
+    read_text_smart,
+)
 
 import browse
+import chapter_patterns
 import novels
 import user_library
 
@@ -53,7 +59,22 @@ class RawChapterTests(unittest.TestCase):
     def test_no_headings_is_single_chapter(self) -> None:
         chapters = self._chapters("just some prose\nwith no chapter markers")
         self.assertEqual(len(chapters), 1)
-        self.assertEqual(chapters[0].title, "Full text")
+        self.assertEqual(chapters[0].title, "Part 01")
+
+    def test_no_headings_are_split_into_bounded_virtual_chapters(self) -> None:
+        chapters = self._chapters("x" * (FALLBACK_BLOCK_CHARS * 2 + 17))
+        self.assertEqual(len(chapters), 3)
+        self.assertTrue(all(len(chapter.body) <= FALLBACK_BLOCK_CHARS for chapter in chapters))
+        self.assertEqual([chapter.title for chapter in chapters], ["Part 01", "Part 02", "Part 03"])
+
+    def test_custom_pattern_detects_bare_numbered_chapters(self) -> None:
+        text = "1重生\n正文一\n2归来\n正文二\n3终章\n正文三"
+        pattern = chapter_patterns.infer("1重生")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbered.txt"
+            path.write_text(text, encoding="utf-8")
+            chapters = raw_chapters(path, pattern)
+        self.assertEqual([chapter.title for chapter in chapters], ["1重生", "2归来", "3终章"])
 
     def test_empty_file_has_no_chapters(self) -> None:
         self.assertEqual(self._chapters("   \n  "), [])
@@ -123,6 +144,44 @@ class ResolvePathTests(unittest.TestCase):
                 self.assertIsNone(novels.resolve_path("book.epub"))
                 self.assertIsNone(novels.resolve_path("nope.txt"))
                 self.assertIsNone(novels.resolve_path("../../etc/passwd"))
+
+    def test_shared_pattern_rebuilds_fallback_chapters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            pattern_path = root / "patterns.json"
+            book = root / "bare-numbered.txt"
+            book.write_text("1重生\n甲\n2归来\n乙\n3终章\n丙", encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root), patch.object(
+                chapter_patterns, "PATTERNS_PATH", pattern_path
+            ):
+                novels.invalidate("bare-numbered.txt")
+                initial = novels.resolve_path("bare-numbered.txt")
+                self.assertEqual(initial.chapter_mode, "fallback")
+                chapter_patterns.set_pattern("bare-numbered.txt", chapter_patterns.infer("1重生"))
+                novels.invalidate("bare-numbered.txt")
+                corrected = novels.resolve_path("bare-numbered.txt")
+                self.assertEqual(corrected.chapter_mode, "custom")
+                self.assertEqual(
+                    [chapter.title for chapter in corrected.chapters],
+                    ["1重生", "2归来", "3终章"],
+                )
+
+
+class ChapterPatternTests(unittest.TestCase):
+    def test_patterns_are_shared_by_book_key_and_removable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            chapter_patterns, "PATTERNS_PATH", Path(directory) / "patterns.json"
+        ):
+            pattern = r"^\s*\d+\S.*$"
+            chapter_patterns.set_pattern("GL/book.txt", pattern)
+            self.assertEqual(chapter_patterns.get("GL/book.txt"), pattern)
+            self.assertTrue(chapter_patterns.remove("GL/book.txt"))
+            self.assertIsNone(chapter_patterns.get("GL/book.txt"))
+
+    def test_unsafe_or_unanchored_patterns_are_rejected(self) -> None:
+        for pattern in (r"\d+title", r"^(a+)+$", r"^(a)\1$"):
+            with self.subTest(pattern=pattern), self.assertRaises(ValueError):
+                chapter_patterns.validate(pattern)
 
 
 class ShelfTests(unittest.TestCase):

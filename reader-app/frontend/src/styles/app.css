@@ -694,6 +694,79 @@ rt.rt-hidden {
 .auth-form .btn-seal { align-self: flex-start; }
 .auth-signed-in p { color: var(--ink-soft); line-height: 1.5; }
 .form-error { color: var(--accent); font-size: 0.8rem; line-height: 1.4; }
+.chapter-pattern-card { width: min(36rem, 100%); }
+.chapter-pattern-note {
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+.chapter-pattern-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+}
+.chapter-pattern-field input {
+  width: 100%;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: 0.82rem/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+}
+.chapter-pattern-field input:focus { outline: none; border-color: var(--accent); }
+.chapter-pattern-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.chapter-pattern-actions .btn-seal { margin: 0; }
+.chapter-pattern-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 2px;
+  font-size: 0.75rem;
+}
+.chapter-pattern-preview {
+  margin-top: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  padding: 10px 12px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+.chapter-pattern-preview strong { color: var(--ink); }
+.chapter-pattern-preview ul {
+  margin: 7px 0 0;
+  padding-left: 20px;
+  font-family: var(--font-reading);
+}
+.chapter-selection-action,
+.chapter-detection-trigger {
+  position: fixed;
+  z-index: 20;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 8px 12px;
+  font: 600 0.75rem/1.2 var(--font-ui);
+}
+.chapter-detection-trigger {
+  right: 16px;
+  bottom: 68px;
+  background: var(--surface);
+  color: var(--accent);
+}
 .admin-card { width: min(62rem, 100%); }
 .admin-command { display: flex; gap: 8px; margin-top: 18px; }
 .admin-command .btn-seal { margin: 0; flex: 0 0 auto; }

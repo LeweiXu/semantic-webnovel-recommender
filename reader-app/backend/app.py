@@ -25,6 +25,7 @@ import admin_jobs
 import annotate
 import auth
 import browse
+import chapter_patterns
 import dictionary
 import download_manager
 import novels
@@ -35,8 +36,9 @@ import user_settings
 from auth import current_user, optional_user
 from ids import nid_decode, nid_encode
 from schemas import (
-    BrowseListing, ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut,
-    ReadingItem, SearchItem, ShelfItem,
+    BrowseListing, ChapterPatternIn, ChapterPatternOut, ChapterPatternPreviewIn,
+    ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut, ReadingItem,
+    SearchItem, ShelfItem,
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
@@ -74,7 +76,7 @@ class SPAStaticFiles(StaticFiles):
 # Annotated chapters are pure functions of their text, so cache the token lists
 # (segmentation + pinyin) to make re-scrolling and revisits instant.
 _ANNO_CACHE_SIZE = 60
-_anno_cache: "OrderedDict[tuple[str, int], list]" = OrderedDict()
+_anno_cache: "OrderedDict[tuple[str, int, int], list]" = OrderedDict()
 _anno_lock = threading.Lock()
 
 
@@ -86,7 +88,9 @@ def _warm() -> None:
 
 
 def _annotated_tokens(nid: str, idx: int, body: str) -> list[dict]:
-    key = (nid, idx)
+    # Include the body in the cache identity: applying a shared chapter regex
+    # can change which text lives at a given chapter index.
+    key = (nid, idx, hash(body))
     with _anno_lock:
         cached = _anno_cache.get(key)
         if cached is not None:
@@ -306,6 +310,26 @@ def _plain_tokens(body: str) -> list[dict]:
     return tokens
 
 
+def _pattern_result(resolved, pattern: str) -> ChapterPatternOut:
+    source = novels.source_text(resolved)
+    matches = chapter_patterns.matches(pattern, source)
+    if len(matches) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="That regex matches fewer than two chapter headings in this book",
+        )
+    if len(matches) > 10_000:
+        raise HTTPException(
+            status_code=422,
+            detail="That regex matches too many lines; make it more specific",
+        )
+    return ChapterPatternOut(
+        pattern=pattern,
+        matches=len(matches),
+        examples=matches[:5],
+    )
+
+
 # Chapter and progress are declared before the catch-all detail route below,
 # because the ``{nid:path}`` converter is greedy and would otherwise swallow the
 # ``/chapter/{idx}`` and ``/progress`` suffixes.
@@ -333,6 +357,76 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
         "prev": idx - 1 if idx > 0 else None,
         "next": idx + 1 if idx + 1 < total else None,
     })
+
+
+@app.post(
+    "/api/novel/{nid:path}/chapter-pattern/preview",
+    response_model=ChapterPatternOut,
+)
+def preview_chapter_pattern(
+    nid: str,
+    body: ChapterPatternPreviewIn,
+    _username: str = Depends(current_user),
+) -> ChapterPatternOut:
+    resolved = _resolve_or_404(nid)
+    try:
+        pattern = chapter_patterns.validate(body.pattern) if body.pattern.strip() else chapter_patterns.infer(body.sample)
+        return _pattern_result(resolved, pattern)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put(
+    "/api/novel/{nid:path}/chapter-pattern",
+    response_model=ChapterPatternOut,
+)
+def save_chapter_pattern(
+    nid: str,
+    body: ChapterPatternIn,
+    _username: str = Depends(current_user),
+) -> ChapterPatternOut:
+    resolved = _resolve_or_404(nid)
+    try:
+        pattern = chapter_patterns.validate(body.pattern)
+        result = _pattern_result(resolved, pattern)
+        chapter_patterns.set_pattern(resolved.url, pattern)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    novels.invalidate(resolved.url)
+    refreshed = _resolve_or_404(nid)
+    result.chapters = len(refreshed.chapters)
+    selected = " ".join(body.sample.strip().splitlines()).strip()
+    if selected:
+        result.selected_chapter = next(
+            (
+                index
+                for index, chapter in enumerate(refreshed.chapters)
+                if chapter.title == selected
+            ),
+            0,
+        )
+    return result
+
+
+@app.delete(
+    "/api/novel/{nid:path}/chapter-pattern",
+    response_model=ChapterPatternOut,
+)
+def delete_chapter_pattern(
+    nid: str,
+    _username: str = Depends(current_user),
+) -> ChapterPatternOut:
+    resolved = _resolve_or_404(nid)
+    old = resolved.chapter_pattern or ""
+    chapter_patterns.remove(resolved.url)
+    novels.invalidate(resolved.url)
+    refreshed = _resolve_or_404(nid)
+    return ChapterPatternOut(
+        pattern="",
+        matches=0,
+        chapters=len(refreshed.chapters),
+        examples=[old] if old else [],
+    )
 
 
 @app.post("/api/novel/{nid:path}/progress", response_model=ProgressOut)
@@ -400,6 +494,8 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         ],
         kind=resolved.kind,
         language=resolved.language,
+        chapter_mode=resolved.chapter_mode,
+        chapter_pattern=resolved.chapter_pattern,
     )
 
 

@@ -109,6 +109,8 @@ class NovelDetail(BaseModel):
     chapters: list[ChapterStub]
     kind: str = "novel"  # "novel" = metadata-backed, "text" = raw browsed file
     language: str = "zh"  # "zh" | "en" — drives pinyin/ruby on the client
+    chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
+    chapter_pattern: str | None = None
 
 
 class ChapterContent(BaseModel):
@@ -133,6 +135,24 @@ class ProgressOut(BaseModel):
     line: int | None = None
     anchor_version: int = 2
     updated: str
+
+
+class ChapterPatternPreviewIn(BaseModel):
+    sample: str = ""
+    pattern: str = ""
+
+
+class ChapterPatternIn(BaseModel):
+    pattern: str
+    sample: str = ""
+
+
+class ChapterPatternOut(BaseModel):
+    pattern: str
+    matches: int
+    chapters: int = 0
+    examples: list[str] = []
+    selected_chapter: int = 0
 
 
 class DefineEntry(BaseModel):

@@ -22,11 +22,116 @@ class Chapter:
         return f"{self.title}\n\n{self.body}".strip()
 
 
-def local_chapters(path: Path) -> list[Chapter]:
+FALLBACK_BLOCK_CHARS = 6_000
+MAX_HEADING_LENGTH = 100
+
+
+def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
+    """Split text into bounded blocks, preferring paragraph/line boundaries."""
+    remaining = text.strip()
+    blocks: list[str] = []
+    while remaining:
+        if len(remaining) <= limit:
+            blocks.append(remaining)
+            break
+        # Prefer a paragraph break, then any line break, without producing a
+        # tiny block just because the source has an early newline.
+        floor = max(1, limit // 2)
+        cut = remaining.rfind("\n\n", floor, limit + 1)
+        separator = 2
+        if cut < floor:
+            cut = remaining.rfind("\n", floor, limit + 1)
+            separator = 1
+        if cut < floor:
+            cut = limit
+            separator = 0
+        block = remaining[:cut].strip()
+        if block:
+            blocks.append(block)
+        remaining = remaining[cut + separator :].lstrip()
+    return blocks
+
+
+def bound_chapters(
+    chapters: list[Chapter],
+    limit: int = FALLBACK_BLOCK_CHARS,
+) -> list[Chapter]:
+    """Guarantee no API chapter can expand into an unbounded reader DOM."""
+    bounded: list[Chapter] = []
+    for chapter in chapters:
+        blocks = _text_blocks(chapter.body, limit)
+        if not blocks:
+            bounded.append(chapter)
+            continue
+        if len(blocks) <= 1:
+            bounded.append(Chapter(chapter.title, blocks[0]))
+            continue
+        for index, block in enumerate(blocks, 1):
+            title = chapter.title if index == 1 else f"{chapter.title} · {index}"
+            bounded.append(Chapter(title, block))
+    return bounded
+
+
+def fallback_chapters(
+    text: str,
+    limit: int = FALLBACK_BLOCK_CHARS,
+) -> list[Chapter]:
+    """Make virtual chapters when a file has no reliable chapter headings."""
+    blocks = _text_blocks(text, limit)
+    width = max(2, len(str(len(blocks))))
+    return [
+        Chapter(f"Part {index:0{width}d}", block)
+        for index, block in enumerate(blocks, 1)
+    ]
+
+
+def chapters_from_pattern(
+    text: str,
+    pattern: str,
+    *,
+    include_preamble: bool = True,
+) -> list[Chapter]:
+    """Split normalized text on complete lines matched by a book-specific regex."""
+    heading_re = re.compile(pattern, re.IGNORECASE)
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    heads = [
+        index
+        for index, line in enumerate(lines)
+        if 0 < len(line.strip()) <= MAX_HEADING_LENGTH
+        and heading_re.search(line.strip()) is not None
+    ]
+    if len(heads) < 2:
+        return []
+    chapters: list[Chapter] = []
+    preamble = "\n".join(lines[: heads[0]]).strip()
+    if preamble and include_preamble:
+        chapters.extend(fallback_chapters(preamble))
+    for order, start in enumerate(heads):
+        end = heads[order + 1] if order + 1 < len(heads) else len(lines)
+        title = lines[start].strip()
+        content = "\n".join(lines[start + 1 : end]).strip()
+        chapters.append(Chapter(title, content))
+    return bound_chapters(chapters)
+
+
+def local_chapters(path: Path, heading_pattern: str | None = None) -> list[Chapter]:
     text = path.read_text(encoding="utf-8", errors="replace")
     source_index = text.find("\n来源：")
     body = text[source_index + 1:] if source_index >= 0 else text
     divider = "═" * 10
+    if heading_pattern:
+        # Generated downloads place visual divider rows around chapters. They
+        # are storage framing, not reader content.
+        custom_body = "\n".join(
+            line for line in body.splitlines() if divider not in line
+        )
+        custom = chapters_from_pattern(
+            custom_body,
+            heading_pattern,
+            include_preamble=False,
+        )
+        if custom:
+            return custom
     parts = body.split("\n")
     pages: list[str] = []
     collecting = False
@@ -44,13 +149,20 @@ def local_chapters(path: Path) -> list[Chapter]:
         pages.append("\n".join(current))
 
     split = split_into_chapters(pages)
-    chapters = [
-        Chapter(header or f"Section {index}", content)
-        for index, (header, content) in enumerate(split, 1)
-        if header or content.strip()
-    ]
-    if chapters:
-        return chapters
+    detected = any(header for header, _content in split)
+    chapters = (
+        [
+            Chapter(header or f"Section {index}", content)
+            for index, (header, content) in enumerate(split, 1)
+            if header or content.strip()
+        ]
+        if detected
+        else []
+    )
+    if detected and chapters:
+        return bound_chapters(chapters)
+    if pages:
+        return fallback_chapters("\n\n".join(page for page in pages if page.strip()))
 
     # Chapterless files have no divider markers; exclude the generated preamble.
     source_line = next(
@@ -58,7 +170,7 @@ def local_chapters(path: Path) -> list[Chapter]:
         -1,
     )
     raw = "\n".join(parts[source_line + 1:]).strip()
-    return [Chapter("Full text", raw)] if raw else []
+    return fallback_chapters(raw)
 
 
 def local_synopsis(path: Path) -> Chapter | None:
@@ -125,18 +237,22 @@ def _is_heading(line: str) -> bool:
     return 0 < len(stripped) <= 100 and _RAW_HEADING_RE.match(stripped) is not None
 
 
-def raw_chapters(path: Path) -> list[Chapter]:
+def raw_chapters(path: Path, heading_pattern: str | None = None) -> list[Chapter]:
     """Split a raw .txt file into chapters by heading lines.
 
     Works for both Chinese (第N章) and English (Chapter N) headings. Files with
-    no detectable headings come back as a single "Full text" chapter.
+    no detectable headings come back as bounded virtual ``Part`` chapters.
     """
     text = read_text_smart(path)
+    if heading_pattern:
+        custom = chapters_from_pattern(text, heading_pattern)
+        if custom:
+            return custom
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     heads = [i for i, line in enumerate(lines) if _is_heading(line)]
     if len(heads) < 2:
         body = text.strip()
-        return [Chapter("Full text", body)] if body else []
+        return fallback_chapters(body)
 
     chapters: list[Chapter] = []
     preamble = "\n".join(lines[: heads[0]]).strip()
@@ -147,7 +263,7 @@ def raw_chapters(path: Path) -> list[Chapter]:
         title = lines[start].strip()
         content = "\n".join(lines[start + 1 : end]).strip()
         chapters.append(Chapter(title, content))
-    return chapters
+    return bound_chapters(chapters)
 
 
 def detect_language(sample: str) -> str:

@@ -19,7 +19,7 @@
 set -euo pipefail
 
 SRC="${NOVEL_SRC:-/mnt/c/Users/lewei/OneDrive - UWA/Documents/Novels}"
-SERVER="${NOVEL_SERVER-lingwei@192.168.20.9}"
+SERVER="${NOVEL_SERVER-homeserver}"           # ssh alias (~/.ssh/config); "" = local copy
 DEST="${NOVEL_DEST:-Novel_Project/}"          # relative to the server's home
 DRY=""
 

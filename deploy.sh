@@ -5,9 +5,13 @@
 # scripts/), so we sync the WHOLE repo, not just reader-app/backend/. Code only:
 # library/ and data/ live on the server and are never touched (see
 # deploy-exclude.txt). After syncing, restart the service on the server.
+#
+# SERVER defaults to the "homeserver" ssh alias (see ~/.ssh/config: HostName,
+# User, IdentityFile), so a change of the server's IP is a one-line edit there,
+# not here. Override with NOVEL_SERVER if needed.
 set -euo pipefail
 
-SERVER="${NOVEL_SERVER:-lingwei@192.168.20.9}"
+SERVER="${NOVEL_SERVER:-homeserver}"
 DEST="${NOVEL_DEST:-Novel_Project/}"          # relative to the server's home
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

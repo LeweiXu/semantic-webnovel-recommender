@@ -61,11 +61,15 @@ export function UploadModal({ file, onClose, onUploaded }: Props) {
   };
 
   return (
-    <div className="modal-scrim" onClick={onClose}>
-      <div className="upload-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="upload-modal-head">
-          <h2 className="panel-title">Upload novel</h2>
-          <button className="upload-x" onClick={onClose} aria-label="Close">✕</button>
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label="Upload novel">
+      <button className="modal-scrim" onClick={onClose} aria-label="Close" />
+      <section className="modal-card upload-card">
+        <div className="modal-head">
+          <div>
+            <div className="section-label">Add to library</div>
+            <h2 className="modal-title">Upload novel</h2>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         <div className="upload-file">
           {file.name}
@@ -109,7 +113,7 @@ export function UploadModal({ file, onClose, onUploaded }: Props) {
             {busy ? "Uploading…" : "Upload"}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

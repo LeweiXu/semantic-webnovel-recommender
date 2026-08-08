@@ -1865,35 +1865,8 @@ input[type="range"]::-moz-range-thumb {
 }
 .fb-size { flex: none; color: var(--muted); font-size: 0.72rem; min-width: 3.5rem; text-align: right; }
 
-/* ── Upload modal ───────────────────────────────────────────────────────── */
-.modal-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: color-mix(in srgb, var(--ink) 45%, transparent);
-}
-.upload-modal {
-  width: min(34rem, 100%);
-  max-height: 90vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: calc(var(--radius) + 4px);
-  box-shadow: var(--shadow);
-  padding: 20px 22px;
-}
-.upload-modal-head { display: flex; align-items: center; justify-content: space-between; }
-.upload-x {
-  border: 0; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 4px;
-}
-.upload-x:hover { color: var(--accent); }
+/* ── Upload modal (uses the shared .modal-layer/.modal-scrim/.modal-card) ──── */
+.upload-card { width: min(32rem, 100%); display: flex; flex-direction: column; gap: 12px; }
 .upload-file { color: var(--ink-soft); font-size: 0.82rem; word-break: break-all; }
 .upload-detected { color: var(--muted); }
 .upload-field { display: flex; flex-direction: column; gap: 4px; }

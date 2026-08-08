@@ -216,14 +216,13 @@ def local_synopsis(path: Path) -> Chapter | None:
 # preamble). local_chapters/local_synopsis above stay for downloaded 52shuku
 # files, which are always UTF-8 with the generated preamble + "═" dividers.
 
-def read_text_smart(path: Path) -> str:
-    """Decode a text file, trying the encodings these files actually use.
+def decode_text(raw: bytes) -> str:
+    """Decode bytes, trying the encodings these files actually use.
 
-    Downloaded 52shuku files are UTF-8, but the browsed Windows library has GBK/
-    GB2312 Chinese files too. Try UTF-8 (with/without BOM) first, then GB18030
-    (a superset of GBK/GB2312), then give up and replace bad bytes.
+    Downloaded 52shuku files are UTF-8, but the browsed/uploaded Windows library
+    has GBK/GB2312 Chinese files too. Try UTF-8 (with/without BOM) first, then
+    GB18030 (a superset of GBK/GB2312), then give up and replace bad bytes.
     """
-    raw = path.read_bytes()
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
             return raw.decode(encoding)
@@ -232,22 +231,31 @@ def read_text_smart(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def raw_chapters(
-    path: Path,
+def read_text_smart(path: Path) -> str:
+    return decode_text(path.read_bytes())
+
+
+def chapters_from_text(
+    text: str,
     heading_pattern: str | None = None,
     heading_patterns: list[str] | None = None,
 ) -> list[Chapter]:
-    """Split a raw .txt file into chapters by heading lines.
-
-    Works for both Chinese (第N章) and English (Chapter N) headings. Files with
-    no detectable headings come back as bounded virtual ``Part`` chapters.
-    """
-    text = read_text_smart(path)
+    """Split raw novel text into chapters by heading lines (Chinese 第N章 or
+    English Chapter N), falling back to bounded virtual ``Part`` chapters."""
     patterns = [heading_pattern] if heading_pattern else (
         heading_patterns if heading_patterns is not None else default_heading_patterns()
     )
     chapters = chapters_from_patterns(text, patterns)
     return chapters if chapters else fallback_chapters(text)
+
+
+def raw_chapters(
+    path: Path,
+    heading_pattern: str | None = None,
+    heading_patterns: list[str] | None = None,
+) -> list[Chapter]:
+    """Split a raw .txt file into chapters. See chapters_from_text."""
+    return chapters_from_text(read_text_smart(path), heading_pattern, heading_patterns)
 
 
 def detect_language(sample: str) -> str:

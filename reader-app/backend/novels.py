@@ -64,18 +64,23 @@ class ResolvedNovel:
 def _records() -> dict[str, NovelRecord]:
     global _records_cache, _records_mtimes, _slug_cache
     with _records_lock:
-        mtimes = tuple(
-            sorted(
-                (str(path), path.stat().st_mtime_ns)
-                for path in LIBRARY_DIR.glob("*/metadata.jsonl")
-                if path.is_file()
-            )
+        paths = sorted(
+            path for path in LIBRARY_DIR.glob("*/metadata.jsonl") if path.is_file()
         )
+        mtimes = tuple((str(path), path.stat().st_mtime_ns) for path in paths)
         if _records_cache is None or mtimes != _records_mtimes:
-            _records_cache = load_all()
+            # Load every category folder that actually has a metadata.jsonl, not
+            # just the fixed crawl CATEGORIES — this is how "uploads" (and any
+            # future non-crawl store) gets picked up by the reader.
+            _records_cache = load_all([path.parent.name for path in paths])
             _records_mtimes = mtimes
             _slug_cache = None  # rebuilt lazily from the fresh records
         return _records_cache
+
+
+def all_records() -> dict[str, NovelRecord]:
+    """Cached {url: NovelRecord} across every store (incl. uploads)."""
+    return _records()
 
 
 def slug_for(record: NovelRecord | None) -> str | None:
@@ -161,6 +166,12 @@ def resolve(url: str) -> ResolvedNovel | None:
     synopsis_chapter = local_synopsis(path)
     synopsis = synopsis_chapter.body if synopsis_chapter else (record.synopsis or "")
     synopsis = trim_synopsis_at_first_chapter(synopsis, chapters)
+    # 52shuku novels are all Chinese; an uploaded novel might be English, so
+    # detect its language from the text to drive pinyin on/off. Sample bodies
+    # only — a generated "Front matter"/"Part" title would skew a short sample.
+    language = "zh"
+    if record.category == "uploads":
+        language = detect_language("".join(ch.body for ch in chapters[:3])[:2000])
     return ResolvedNovel(
         id=slug_for(record) or url,
         url=url,
@@ -171,7 +182,7 @@ def resolve(url: str) -> ResolvedNovel | None:
         synopsis=synopsis,
         chapters=chapters,
         kind="novel",
-        language="zh",
+        language=language,
         chapter_mode="custom" if pattern else _chapter_mode(chapters),
         chapter_pattern=pattern,
         chapter_examples=chapter_patterns.get_examples(url),
@@ -215,7 +226,7 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
             while len(_chapter_cache) > _CACHE_SIZE:
                 _chapter_cache.popitem(last=False)
 
-    sample = "\n".join(ch.text() for ch in chapters[:1])[:2000]
+    sample = "".join(ch.body for ch in chapters[:3])[:2000]
     pattern = chapter_patterns.get(rawid)
     return ResolvedNovel(
         id=rawid,

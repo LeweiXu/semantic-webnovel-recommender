@@ -56,7 +56,9 @@ def list_dir(relpath: str = "") -> dict:
         raise ValueError("not a directory")
     entries: list[dict] = []
     for child in base.iterdir():
-        if child.name.startswith("."):
+        # Hide dotfiles and the per-category store files (metadata.jsonl,
+        # _catalog.jsonl, and other underscore-prefixed bookkeeping).
+        if child.name.startswith((".", "_")) or child.name == "metadata.jsonl":
             continue
         kind = classify(child)
         try:

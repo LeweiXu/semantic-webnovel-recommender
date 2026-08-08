@@ -12,13 +12,12 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from recsys.store import load_all
 from webnovel.library import list_library
 
 import admin_jobs
@@ -30,6 +29,7 @@ import dictionary
 import download_manager
 import novels
 import recommend_api
+import upload_api
 import user_library
 import user_progress
 import user_settings
@@ -109,7 +109,7 @@ def _annotated_tokens(nid: str, idx: int, body: str) -> list[dict]:
 
 @app.get("/api/library/reading", response_model=list[ReadingItem])
 def reading(username: str = Depends(current_user)) -> list[ReadingItem]:
-    records = load_all()
+    records = novels.all_records()
     items: list[ReadingItem] = []
     for url, entry in user_progress.all_progress(username).items():
         record = records.get(url)
@@ -187,7 +187,7 @@ def _shelf_id_for_url(url: str, records: dict) -> str | None:
 
 @app.get("/api/library/shelf", response_model=list[ShelfItem])
 def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
-    records = load_all()
+    records = novels.all_records()
     progress = user_progress.all_progress(username)
     lib = user_library.load(username)
     removed = set(lib["removed"])
@@ -277,6 +277,41 @@ def browse_dir(path: str = Query(default="")) -> BrowseListing:
         raise HTTPException(status_code=404, detail="No such folder")
 
 
+# ── Upload a .txt into library/uploads/ (any logged-in user) ─────────────────
+
+def _require_txt(file: UploadFile) -> None:
+    if not (file.filename or "").lower().endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Only .txt files can be uploaded")
+
+
+@app.post("/api/upload/detect")
+async def upload_detect(
+    file: UploadFile = File(...), _username: str = Depends(current_user)
+) -> dict:
+    _require_txt(file)
+    return upload_api.detect(file.filename, await file.read())
+
+
+@app.post("/api/upload")
+async def upload_save(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    author: str = Form(""),
+    tags: str = Form(""),  # comma-separated
+    synopsis: str = Form(""),
+    status: str = Form(""),
+    _username: str = Depends(current_user),
+) -> dict:
+    _require_txt(file)
+    raw = await file.read()
+    return upload_api.save(
+        file.filename, raw,
+        title=title, author=author,
+        tags=[t.strip() for t in tags.split(",") if t.strip()],
+        synopsis=synopsis, status=status,
+    )
+
+
 # ── Novel + chapters ─────────────────────────────────────────────────────────
 
 def _resolve_or_404(nid: str):
@@ -285,6 +320,11 @@ def _resolve_or_404(nid: str):
     #  2. a raw browse path like "GL/foo.txt" (the file explorer), or
     #  3. a legacy base64 url id (keeps old shared links working; no "/").
     resolved = novels.resolve_slug(nid)
+    # A browse path to a metadata-backed file (e.g. an upload "uploads/foo.txt")
+    # carries the extension; its slug drops it. Try that so the reader shows the
+    # record's metadata instead of a bare record-less read.
+    if resolved is None and "." in nid.rsplit("/", 1)[-1]:
+        resolved = novels.resolve_slug(nid.rsplit(".", 1)[0])
     if resolved is None:
         resolved = novels.resolve_path(nid)
     if resolved is None and "/" not in nid:

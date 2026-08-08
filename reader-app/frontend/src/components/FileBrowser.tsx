@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type BrowseEntry, type BrowseListing } from "../api/client";
+import { useAuth } from "../store/auth";
 import { libraryPath, navigate, novelPath, writeUrl } from "../routing";
+import { UploadModal } from "./UploadModal";
 
 // Split a browse path into breadcrumb crumbs: [{ label, path }], root first.
 function crumbs(path: string): { label: string; path: string }[] {
@@ -43,11 +45,31 @@ export function FileBrowser({
   initialPath?: string;
   onChange?: () => void;
 }) {
+  const user = useAuth((s) => s.user);
   const [path, setPath] = useState(initialPath);
   const [listing, setListing] = useState<BrowseListing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState<Set<string>>(new Set());
+  const [dragOver, setDragOver] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const pickFile = (file: File | null | undefined) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".txt")) {
+      setError("Only .txt files can be uploaded.");
+      return;
+    }
+    setError(null);
+    setPendingFile(file);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (user) pickFile(e.dataTransfer.files?.[0]);
+  };
 
   // Navigate to a folder: fetch it and reflect it in the URL (no history spam,
   // no page remount — writeUrl only touches the address bar).
@@ -89,21 +111,43 @@ export function FileBrowser({
   };
 
   return (
-    <div className="fb">
-      <nav className="fb-crumbs" aria-label="Folder path">
-        {crumbs(path).map((c, i, all) => (
-          <span key={c.path} className="fb-crumb-wrap">
-            {i > 0 && <span className="fb-sep" aria-hidden>/</span>}
-            {i === all.length - 1 ? (
-              <span className="fb-crumb is-current">{c.label}</span>
-            ) : (
-              <button className="fb-crumb" onClick={() => goTo(c.path)}>
-                {c.label}
-              </button>
-            )}
-          </span>
-        ))}
-      </nav>
+    <div
+      className={`fb${dragOver ? " is-drag" : ""}`}
+      onDragOver={user ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+      onDragLeave={user ? () => setDragOver(false) : undefined}
+      onDrop={user ? onDrop : undefined}
+    >
+      <div className="fb-bar">
+        <nav className="fb-crumbs" aria-label="Folder path">
+          {crumbs(path).map((c, i, all) => (
+            <span key={c.path} className="fb-crumb-wrap">
+              {i > 0 && <span className="fb-sep" aria-hidden>/</span>}
+              {i === all.length - 1 ? (
+                <span className="fb-crumb is-current">{c.label}</span>
+              ) : (
+                <button className="fb-crumb" onClick={() => goTo(c.path)}>
+                  {c.label}
+                </button>
+              )}
+            </span>
+          ))}
+        </nav>
+        {user && (
+          <>
+            <button className="fb-upload" onClick={() => fileInput.current?.click()} title="Upload a .txt novel">
+              ↑ Upload .txt
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".txt,text/plain"
+              hidden
+              onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }}
+            />
+          </>
+        )}
+      </div>
+      {dragOver && <div className="fb-drophint">Drop a .txt file to upload</div>}
 
       {error ? (
         <div className="fb-note">{error}</div>
@@ -155,6 +199,18 @@ export function FileBrowser({
             </li>
           ))}
         </ul>
+      )}
+
+      {pendingFile && (
+        <UploadModal
+          file={pendingFile}
+          onClose={() => setPendingFile(null)}
+          onUploaded={() => {
+            setPendingFile(null);
+            goTo("uploads"); // show the new file where it landed
+            onChange?.();
+          }}
+        />
       )}
     </div>
   );

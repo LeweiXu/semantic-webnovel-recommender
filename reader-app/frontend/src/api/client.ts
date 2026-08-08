@@ -122,6 +122,24 @@ export interface BrowseListing {
   entries: BrowseEntry[];
 }
 
+export interface UploadMeta {
+  filename: string;
+  title: string;
+  author: string;
+  status: string;
+  language: string;
+  chapter_count: number;
+  synopsis: string;
+  tags: string[];
+}
+
+export interface UploadResult {
+  id: string;
+  url: string;
+  title: string;
+  chapter_count: number;
+}
+
 export interface DownloadDTO {
   url: string;
   nid: string;
@@ -283,6 +301,13 @@ async function deleteJSON<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Multipart POST. Don't set Content-Type — the browser adds the boundary.
+async function postForm<T>(url: string, form: FormData): Promise<T> {
+  const res = await apiFetch(url, { method: "POST", body: form });
+  if (!res.ok) throw await responseError(res);
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   reading: () => getJSON<ReadingItem[]>("/api/library/reading"),
   search: (q: string) =>
@@ -291,6 +316,24 @@ export const api = {
     getJSON<BrowseListing>(`/api/browse?path=${encodeURIComponent(path)}`),
   startDownload: (url: string) => postJSON<DownloadDTO>("/api/download", { url }),
   downloads: () => getJSON<DownloadDTO[]>("/api/downloads"),
+  detectUpload: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return postForm<UploadMeta>("/api/upload/detect", form);
+  },
+  uploadTxt: (
+    file: File,
+    fields: { title: string; author: string; tags: string; synopsis: string; status: string },
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", fields.title);
+    form.append("author", fields.author);
+    form.append("tags", fields.tags);
+    form.append("synopsis", fields.synopsis);
+    form.append("status", fields.status);
+    return postForm<UploadResult>("/api/upload", form);
+  },
   shelf: () => getJSON<ShelfItem[]>("/api/library/shelf"),
   addToShelf: (id: string) => postJSON<ShelfItem[]>("/api/library/shelf", { id }),
   removeFromShelf: (id: string) =>

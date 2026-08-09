@@ -100,6 +100,14 @@ export function navigate(path: string, replace = false) {
 
 // State is already updated by the caller; change only the address bar. This is
 // used for search state and per-line reader position to avoid remounting.
+//
+// Callers on a scroll path (the reader) hit this every animation frame, so skip
+// replaceState when the URL wouldn't actually change. Firefox mobile treats each
+// history write as a location change: it re-runs reader-view detection and resets
+// the dynamic toolbar's auto-hide, so a per-frame no-op write pins the URL bar
+// open and makes the reader-view icon flicker. Only `replace` is guarded, since
+// a repeat pushState is a deliberate history entry.
 export function writeUrl(path: string, replace = true) {
+  if (replace && `${window.location.pathname}${window.location.search}` === path) return;
   window.history[replace ? "replaceState" : "pushState"]({}, "", path);
 }

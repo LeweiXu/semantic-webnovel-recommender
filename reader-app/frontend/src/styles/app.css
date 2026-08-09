@@ -12,7 +12,7 @@
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
 }
 
@@ -36,12 +36,14 @@ button {
 }
 
 .app {
-  /* dvh tracks the *visible* viewport, shrinking/growing with the mobile
-     browser's toolbars, so the reading area always fills the screen exactly
-     (no leftover gap, no content hidden behind a toolbar). 100vh is the
-     fallback for the rare browser without dvh. */
-  height: 100vh;
-  height: 100dvh;
+  /* min-height, not height: the document itself has to be the thing that
+     scrolls. Mobile browsers only collapse their URL/toolbar in response to the
+     root scroller moving — scrolling a nested overflow container tells them
+     nothing, so an app shell pinned to the viewport pins their toolbar open too.
+     dvh keeps a short page filling the *visible* viewport; 100vh is the fallback
+     for the rare browser without dvh. */
+  min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -86,9 +88,11 @@ button {
 /* In the reader the header floats over the scrolling text instead of taking a
    flex row. Hiding it is then a pure transform (compositor only) — no height/
    margin animation, so the scroll never reflows or stutters. The scroll column
-   gets matching top padding so the first line clears the header when it's up. */
+   gets matching top padding so the first line clears the header when it's up.
+   Fixed (not absolute) because the reader scrolls the document now, so an
+   absolute header would scroll away with the text. */
 .app.reading .topbar {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
@@ -264,10 +268,10 @@ button {
 
 /* ── Reading column ──────────────────────────────────────────────────────── */
 .scroll-root {
-  height: 100%;
-  overflow-y: auto;
-  /* No smooth scroll: landing on a chapter and unmounting passed chapters set
-     scrollTop programmatically, and smooth behaviour would animate every jump. */
+  /* Deliberately not a scroll container — the text flows into the document so
+     the page itself scrolls (see .app). No smooth scroll either: landing on a
+     chapter and unmounting passed chapters set the scroll position
+     programmatically, and smooth behaviour would animate every jump. */
 }
 .reading-column {
   max-width: var(--measure);

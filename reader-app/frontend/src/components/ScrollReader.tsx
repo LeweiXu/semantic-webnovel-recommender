@@ -24,9 +24,12 @@ const DROP_MARGIN_VH = 0.25;
 // it, so the exact-resume bookmark lands your line in view, not under the bar.
 const READING_TOP_INSET = 56;
 
-function relativeTop(el: HTMLElement, root: HTMLElement): number {
-  return el.getBoundingClientRect().top - root.getBoundingClientRect().top;
-}
+// The reader scrolls the document (not a nested overflow box) so mobile browsers
+// collapse their toolbars, which means getBoundingClientRect is already relative
+// to the visible viewport and these are just thin readers over the window.
+const scrollTop = () => window.scrollY;
+const viewportHeight = () => window.innerHeight;
+const scrollTo = (top: number) => window.scrollTo(0, top);
 
 function renderedLineHeight(paragraph: HTMLElement): number {
   const computed = window.getComputedStyle(paragraph);
@@ -105,11 +108,10 @@ function characterOffsetAtLine(paragraph: HTMLElement, within: number): number |
 // started, return the stable character offset at the first displayed line.
 function anchorAtViewportTop(
   section: HTMLElement,
-  root: HTMLElement,
   topInset: number,
 ): number | null {
   const paragraphs = section.querySelectorAll<HTMLElement>(".chapter-body > p");
-  const viewportTop = root.getBoundingClientRect().top + topInset + 1;
+  const viewportTop = topInset + 1;
   let previous: HTMLElement | null = null;
 
   for (const paragraph of paragraphs) {
@@ -134,7 +136,7 @@ function anchorAtViewportTop(
 
 // Legacy (v1) bookmarks were rendered-line numbers. Keep this only to migrate
 // an existing bookmark once; all newly written anchors are character offsets.
-function scrollTopForLine(section: HTMLElement, root: HTMLElement, line: number): number {
+function scrollTopForLine(section: HTMLElement, line: number): number {
   const paragraphs = section.querySelectorAll<HTMLElement>(".chapter-body > p");
   let remaining = Math.max(0, line);
   let lastOffset = 0;
@@ -143,16 +145,16 @@ function scrollTopForLine(section: HTMLElement, root: HTMLElement, line: number)
     const count = renderedLineCount(paragraph);
     const lineHeight = renderedLineHeight(paragraph);
     if (remaining < count) {
-      const top = root.scrollTop + relativeTop(paragraph, root) + remaining * lineHeight;
+      const top = scrollTop() + paragraph.getBoundingClientRect().top + remaining * lineHeight;
       return Math.max(0, top - READING_TOP_INSET);
     }
-    lastOffset = root.scrollTop + relativeTop(paragraph, root) + (count - 1) * lineHeight;
+    lastOffset = scrollTop() + paragraph.getBoundingClientRect().top + (count - 1) * lineHeight;
     remaining -= count;
   }
   return Math.max(0, lastOffset - READING_TOP_INSET);
 }
 
-function scrollTopForAnchor(section: HTMLElement, root: HTMLElement, anchor: number): number {
+function scrollTopForAnchor(section: HTMLElement, anchor: number): number {
   const paragraphs = Array.from(
     section.querySelectorAll<HTMLElement>(".chapter-body > p[data-char-start][data-char-end]"),
   );
@@ -190,10 +192,7 @@ function scrollTopForAnchor(section: HTMLElement, root: HTMLElement, anchor: num
   const lineHeight = renderedLineHeight(paragraph);
   const within = Math.max(0, Math.floor((charRect.top - paragraphRect.top) / lineHeight));
   const lineTop = paragraphRect.top + within * lineHeight;
-  return Math.max(
-    0,
-    root.scrollTop + lineTop - root.getBoundingClientRect().top - READING_TOP_INSET,
-  );
+  return Math.max(0, scrollTop() + lineTop - READING_TOP_INSET);
 }
 
 export function ScrollReader() {
@@ -228,7 +227,6 @@ export function ScrollReader() {
   const [loaded, setLoaded] = useState<number[]>([]);
   const [popup, setPopup] = useState<PopupTarget | null>(null);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   const sections = useRef<Map<number, HTMLElement>>(new Map());
   const fetching = useRef<Set<number>>(new Set());
   // When the window changes above the viewport (prepend or drop-from-top), the
@@ -254,11 +252,9 @@ export function ScrollReader() {
   const ensure = (idx: number) =>
     chapters[idx] ? Promise.resolve(chapters[idx]) : loadChapter(idx, true);
 
-  // Element edges relative to the scroll container's visible top.
-  const relTop = (el: HTMLElement) =>
-    relativeTop(el, scrollRef.current!);
-  const relBottom = (el: HTMLElement) =>
-    el.getBoundingClientRect().bottom - scrollRef.current!.getBoundingClientRect().top;
+  // Element edges relative to the visible top of the viewport.
+  const relTop = (el: HTMLElement) => el.getBoundingClientRect().top;
+  const relBottom = (el: HTMLElement) => el.getBoundingClientRect().bottom;
 
   // Land on a chapter: mount only it (nothing above), then pin the page top.
   const landOn = (
@@ -297,9 +293,6 @@ export function ScrollReader() {
 
   // Apply pending anchor correction / land restore after the window renders.
   useLayoutEffect(() => {
-    const root = scrollRef.current;
-    if (!root) return;
-
     if (pendingLand.current !== null) {
       const idx = pendingLand.current;
       pendingLand.current = null;
@@ -308,11 +301,13 @@ export function ScrollReader() {
       pendingLine.current = null;
       pendingAnchorVersion.current = 2;
       const el = sections.current.get(idx);
-      root.scrollTop = el && line !== null
-        ? anchorVersion >= 2
-          ? scrollTopForAnchor(el, root, line)
-          : scrollTopForLine(el, root, line)
-        : 0;
+      scrollTo(
+        el && line !== null
+          ? anchorVersion >= 2
+            ? scrollTopForAnchor(el, line)
+            : scrollTopForLine(el, line)
+          : 0,
+      );
       anchor.current = null;
       landing.current = false;
       return;
@@ -320,7 +315,7 @@ export function ScrollReader() {
 
     if (anchor.current) {
       const el = sections.current.get(anchor.current.idx);
-      if (el) root.scrollTop += relTop(el) - anchor.current.top;
+      if (el) scrollTo(scrollTop() + relTop(el) - anchor.current.top);
       anchor.current = null;
     }
   }, [loaded, novel.nid]);
@@ -329,16 +324,15 @@ export function ScrollReader() {
   // slide the mounted window. Re-bound when the window or current chapter change
   // so it always closes over fresh values.
   useEffect(() => {
-    const root = scrollRef.current;
-    if (!root || loaded.length === 0) return;
+    if (loaded.length === 0) return;
     let raf = 0;
-    let lastScrollTop = root.scrollTop;
+    let lastScrollTop = scrollTop();
     let directionDelta = 0;
 
     const tick = () => {
       raf = 0;
       if (landing.current) return; // a jump is settling — don't fight it
-      const vh = root.clientHeight;
+      const vh = viewportHeight();
       const line = vh * 0.3; // reading line, relative to viewport top
 
       // Current chapter = the lowest mounted chapter whose top has passed the line.
@@ -363,7 +357,7 @@ export function ScrollReader() {
       let topL: number | null = null;
       const topEl = sections.current.get(topC);
       if (topEl) {
-        topL = anchorAtViewportTop(topEl, root, chromeVisible ? READING_TOP_INSET : 0);
+        topL = anchorAtViewportTop(topEl, chromeVisible ? READING_TOP_INSET : 0);
       }
       setTop(topC, topL);
       writeUrl(readerPath(novel.slug, topC), true);
@@ -396,7 +390,7 @@ export function ScrollReader() {
     };
 
     const onScroll = () => {
-      const nextScrollTop = root.scrollTop;
+      const nextScrollTop = scrollTop();
       const delta = nextScrollTop - lastScrollTop;
       if (delta !== 0) {
         if (Math.sign(delta) !== Math.sign(directionDelta)) directionDelta = 0;
@@ -416,12 +410,12 @@ export function ScrollReader() {
       if (raf) return;
       raf = window.requestAnimationFrame(tick);
     };
-    root.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
     // Reconcile once on (re)bind so neighbours prefetch on open and the window
     // keeps converging even if the current chapter never triggers a scroll.
     tick();
     return () => {
-      root.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
       if (raf) window.cancelAnimationFrame(raf);
     };
   }, [
@@ -442,7 +436,7 @@ export function ScrollReader() {
   };
 
   return (
-    <div className="scroll-root" ref={scrollRef}>
+    <div className="scroll-root">
       {loaded.length === 0 ? (
         <div className="stage-note">Opening…</div>
       ) : (

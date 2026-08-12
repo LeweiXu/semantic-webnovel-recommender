@@ -16,7 +16,15 @@ from recsys.catalog import CatalogRecord
 from recsys.store import NovelRecord
 from scraper import parse_landing
 from webnovel.downloads import catalogue_urls
-from webnovel.library import MAX_CHAPTER_CHARS, Chapter, local_chapters, local_synopsis
+from webnovel.library import (
+    MAX_CHAPTER_CHARS,
+    Chapter,
+    chapter_number,
+    chapters_from_text,
+    local_chapters,
+    local_synopsis,
+    read_text_smart,
+)
 from webnovel.targets import resolve_target
 
 import download
@@ -128,35 +136,93 @@ Second body
         self.assertTrue(chapters)
         self.assertTrue(all(chapter.title.startswith("Part ") for chapter in chapters))
 
-    def test_undetected_run_is_split_into_bounded_parts(self) -> None:
-        # The run below has no heading the detector recognises (an uploaded file
-        # whose chapter breaks aren't marked), so it all lands in 第1章's body.
-        # Left whole that block is too big for the reader to annotate, so it has
-        # to come back as bounded parts.
-        buried = "\n\n".join(f"未标记段落{n}\n\n{'字' * 900}" for n in range(1, 16))
-        text = (
-            "标题：Test\n作者：A\n来源：https://example.test/book\n\n"
-            f"第1章 One\n\n{buried}\n\n第2章 Two\n\n短正文\n"
+    def _write(self, directory: str, body: str) -> Path:
+        path = Path(directory) / "novel.txt"
+        path.write_text(
+            f"标题：Test\n作者：A\n来源：https://example.test/book\n\n{body}",
+            encoding="utf-8",
         )
+        return path
+
+    def test_chapter_number_reads_arabic_and_chinese_ordinals(self) -> None:
+        cases = {
+            "第1章 One": 1,
+            "第五章 Five": 5,
+            "第十五章": 15,
+            "第二十三章": 23,
+            "第一百零三回": 103,
+            "Chapter 7": 7,
+            "12归来": 12,
+            "楔子": None,
+            "番外": None,
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(chapter_number(title), expected)
+
+    def test_numbering_gap_splits_the_fused_chapter(self) -> None:
+        # 第三章 is followed by 第十章, so chapters four-nine were never detected
+        # and their text is sitting inside 第三章's body.
+        buried = "\n\n".join(f"未标记段落{n}\n\n{'字' * 900}" for n in range(1, 16))
+        normal = "文" * 1200  # distinct from the buried text's 字 marker
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "novel.txt"
-            path.write_text(text, encoding="utf-8")
+            path = self._write(
+                directory,
+                f"第一章 One\n\n{normal}\n\n第二章 Two\n\n{normal}\n\n"
+                f"第三章 Three\n\n{buried}\n\n第十章 Ten\n\n{normal}\n",
+            )
             chapters = local_chapters(path)
 
         titles = [chapter.title for chapter in chapters]
-        self.assertEqual(titles[0], "第1章 One")
-        # The oversized first chapter became numbered continuation parts.
-        self.assertIn("第1章 One (2)", titles)
-        self.assertIn("第2章 Two", titles)
-        # Every part is small enough for the reader to render with pinyin/ruby.
+        self.assertEqual(titles[0], "第一章 One")
+        self.assertIn("第三章 Three (2)", titles)
+        self.assertIn("第十章 Ten", titles)
+        # Normal chapters either side of the fused one are left alone.
+        self.assertEqual(titles.count("第一章 One"), 1)
+        self.assertNotIn("第二章 Two (2)", titles)
+        # Parts are small enough for the reader to render with pinyin/ruby.
         for chapter in chapters:
             self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS)
-        # Normal-length chapters are never split into parts.
-        self.assertEqual(titles.count("第2章 Two"), 1)
-        self.assertNotIn("第2章 Two (2)", titles)
+        # The chapter that isn't fused is left exactly as it was.
+        self.assertEqual(titles.count("第十章 Ten"), 1)
+        self.assertNotIn("第十章 Ten (2)", titles)
         # No text is lost or duplicated by the re-split.
         rejoined = "".join(chapter.body for chapter in chapters)
         self.assertEqual(rejoined.count("字" * 900), 15)
+
+    def test_front_matter_before_first_numbered_chapter_is_split(self) -> None:
+        # The reported case: chapters 1-15 undetected, so the first heading found
+        # is 第16章 and everything above it is one fused block.
+        buried = "\n\n".join(f"未标记段落{n}\n\n{'字' * 900}" for n in range(1, 16))
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(
+                directory,
+                f"{buried}\n\n第16章 Sixteen\n\n短正文\n\n第17章 Seventeen\n\n短正文\n",
+            )
+            chapters = chapters_from_text(read_text_smart(path))
+
+        titles = [chapter.title for chapter in chapters]
+        self.assertIn("第16章 Sixteen", titles)
+        self.assertIn("第17章 Seventeen", titles)
+        # The front matter above 第16章 held chapters 1-15, so it was split.
+        self.assertGreater(sum(1 for t in titles if t.startswith("Front matter")), 1, titles)
+        for chapter in chapters:
+            self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS)
+        # The two real chapters are untouched.
+        self.assertEqual(titles.count("第16章 Sixteen"), 1)
+        self.assertEqual(titles.count("第17章 Seventeen"), 1)
+
+    def test_long_chapter_without_a_numbering_gap_is_left_whole(self) -> None:
+        # The point of using numbering rather than length: consecutive ordinals
+        # mean nothing is missing, so a genuinely long chapter stays one chapter.
+        long_body = "字" * (MAX_CHAPTER_CHARS * 6)
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(directory, f"第1章 One\n\n{long_body}\n\n第2章 Two\n\n短正文\n")
+            chapters = local_chapters(path)
+
+        titles = [chapter.title for chapter in chapters]
+        self.assertEqual(titles, ["第1章 One", "第2章 Two"])
+        self.assertEqual(len(chapters[0].body), len(long_body))
 
     def test_saved_file_extracts_synopsis_after_preamble(self) -> None:
         text = """标题：Test

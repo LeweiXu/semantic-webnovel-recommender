@@ -25,10 +25,17 @@ class Chapter:
 
 FALLBACK_BLOCK_CHARS = 2_000
 MAX_HEADING_LENGTH = 100
-# A *detected* chapter this long is almost certainly not one chapter — it means
-# the heading detector missed the headings inside it and several chapters got
-# glued together. See _bounded() for why that has to be split.
-MAX_CHAPTER_CHARS = 12_000
+# Block size used when cutting up a chapter the *numbering* proved is really
+# several fused chapters. Length alone never triggers a split: a real chapter is
+# sometimes very long, and splitting it would be wrong.
+MAX_CHAPTER_CHARS = 3_000
+# A jump bigger than this is treated as noise (a year in a title, a volume
+# restart) rather than that many missing chapters.
+MAX_NUMBER_GAP = 500
+# How much longer than the book's typical chapter a body must be before a
+# numbering gap is believed. These sources skip a chapter number often enough
+# that the gap alone would chop up plenty of perfectly normal chapters.
+FUSED_LENGTH_FACTOR = 1.5
 DEFAULT_HEADING_PATTERNS_PATH = Path(__file__).with_name("chapter_heading_patterns.json")
 
 
@@ -73,30 +80,130 @@ def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
     return blocks
 
 
-def _bounded(chapters: list[Chapter], limit: int = MAX_CHAPTER_CHARS) -> list[Chapter]:
-    """Re-split detected chapters that are far too long to be a single chapter.
+_CN_DIGITS = {
+    "〇": 0, "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+_CN_NUMERAL = "".join(_CN_DIGITS) + "".join(_CN_UNITS)
+# 第N章 / 第N节 / 第N回 …, with either Arabic or Chinese numerals.
+_ORDINAL_RE = re.compile(rf"^第\s*([0-9]+|[{_CN_NUMERAL}]+)\s*[章节節回卷篇集]")
+_ENGLISH_ORDINAL_RE = re.compile(r"^(?:chapter|ch\.?|part)\s*([0-9]+)\b", re.IGNORECASE)
+_BARE_ORDINAL_RE = re.compile(r"^([0-9]+)")
 
-    When the heading detector misses a run of headings (common in uploaded
-    files), every one of those chapters lands in the preceding chapter's body.
-    The reader then has to render the whole run as one block, which blows past
-    its rich-text budget, so it silently falls back to plain paragraphs — no
-    pinyin, no clickable dictionary — on top of being an absurdly long page.
 
-    Cutting the block into bounded continuation parts keeps those features
-    working. Real chapters are nowhere near the limit and pass through
-    untouched, so this doesn't litter the contents list in the normal case.
+def _cn_number(text: str) -> int | None:
+    """Parse a Chinese numeral: 一, 十五, 二十三, 一百零三."""
+    total = 0
+    current = 0
+    seen = False
+    for char in text:
+        if char in _CN_DIGITS:
+            current = _CN_DIGITS[char]
+            seen = True
+        elif char in _CN_UNITS:
+            # A leading unit is implicitly one: 十五 is 15, not 5.
+            total += (current or 1) * _CN_UNITS[char]
+            current = 0
+            seen = True
+        else:
+            return None
+    return total + current if seen else None
+
+
+def chapter_number(title: str) -> int | None:
+    """Return the ordinal a chapter heading claims, or None if it has none."""
+    text = title.strip()
+    match = _ORDINAL_RE.match(text)
+    if match:
+        raw = match.group(1)
+        return int(raw) if raw.isdigit() else _cn_number(raw)
+    for pattern in (_ENGLISH_ORDINAL_RE, _BARE_ORDINAL_RE):
+        match = pattern.match(text)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _fused_indices(chapters: list[Chapter]) -> set[int]:
+    """Find chapters whose body actually holds several chapters' worth of text.
+
+    The heading detector sometimes misses a run of headings, and every chapter in
+    that run then ends up inside the body of whatever came before it. The give-
+    away is the numbering: if 第一章 is followed by 第五章, the three chapters in
+    between are sitting inside 第一章. Likewise, if the first heading found is
+    第16章, chapters 1-15 are in the front matter above it.
+
+    Numbering is the signal rather than length, because a real chapter is
+    sometimes genuinely very long and must not be chopped up.
+
+    A gap on its own isn't proof, though: these sources skip a chapter number
+    fairly often without any text actually being missing. So a flagged chapter
+    also has to be far longer than this book's typical chapter before we believe
+    it holds several. Length can only ever veto a split here, never cause one.
     """
-    bounded: list[Chapter] = []
-    for chapter in chapters:
-        if len(chapter.body) <= limit:
-            bounded.append(chapter)
+    numbers = [chapter_number(chapter.title) for chapter in chapters]
+    typical = _typical_body(chapters)
+    fused: set[int] = set()
+    previous: int | None = None
+    for index, number in enumerate(numbers):
+        if number is None:
+            continue
+        if previous is None:
+            # Nothing numbered before this one. If it doesn't start the book,
+            # the missing chapters are in the unnumbered text above it.
+            if 1 < number <= MAX_NUMBER_GAP:
+                fused.update(
+                    early for early in range(index)
+                    if _holds_multiple(chapters[early], typical)
+                )
+        else:
+            gap = number - numbers[previous]
+            if 1 < gap <= MAX_NUMBER_GAP and _holds_multiple(chapters[previous], typical):
+                fused.add(previous)
+        previous = index
+    return fused
+
+
+def _typical_body(chapters: list[Chapter]) -> int:
+    """Median body length, the yardstick for "normal chapter" in this book."""
+    lengths = sorted(len(chapter.body) for chapter in chapters)
+    return lengths[len(lengths) // 2] if lengths else 0
+
+
+def _holds_multiple(chapter: Chapter, typical: int) -> bool:
+    """Is this body long enough to plausibly hold more than one chapter?
+
+    Not scaled by how many chapters are missing: the skipped ones are often
+    short, so demanding the full combined length would miss real fusions. All
+    this has to rule out is a normal-sized chapter whose number skipped a beat.
+    """
+    if len(chapter.body) <= MAX_CHAPTER_CHARS:
+        return False
+    return len(chapter.body) >= max(typical, MAX_CHAPTER_CHARS) * FUSED_LENGTH_FACTOR
+
+
+def _split_fused(chapters: list[Chapter], limit: int = MAX_CHAPTER_CHARS) -> list[Chapter]:
+    """Cut fused chapters into bounded parts, leaving every real chapter alone.
+
+    A fused block is unreadable as one page: the reader has to render the whole
+    run at once, which blows past its rich-text budget, so pinyin and the
+    clickable dictionary silently drop out. Bounded parts keep both working.
+    """
+    fused = _fused_indices(chapters)
+    if not fused:
+        return chapters
+    split: list[Chapter] = []
+    for index, chapter in enumerate(chapters):
+        if index not in fused or len(chapter.body) <= limit:
+            split.append(chapter)
             continue
         blocks = _text_blocks(chapter.body, limit)
-        bounded.extend(
+        split.extend(
             Chapter(chapter.title if order == 1 else f"{chapter.title} ({order})", block)
             for order, block in enumerate(blocks, 1)
         )
-    return bounded
+    return split
 
 
 def fallback_chapters(
@@ -138,11 +245,11 @@ def chapters_from_patterns(
         title = lines[start].strip()
         content = "\n".join(lines[start + 1 : end]).strip()
         chapters.append(Chapter(title, content))
-    # Detected chapters keep their own boundaries — splitting them at the small
-    # fallback block size would create fake duplicate TOC entries and arbitrary
-    # mid-chapter breaks in every normal book. Only blocks big enough to mean
-    # "the detector missed the headings in here" get cut up; see _bounded().
-    return _bounded(chapters)
+    # Detected chapters keep their own boundaries — splitting on length alone
+    # would create fake duplicate TOC entries and arbitrary mid-chapter breaks
+    # in any book with a long chapter. Only chapters the numbering proves are
+    # several fused chapters get cut up; see _split_fused().
+    return _split_fused(chapters)
 
 
 def chapters_from_pattern(

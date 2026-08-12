@@ -12,7 +12,7 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -663,7 +663,11 @@ def similar(
 # ── Dictionary ───────────────────────────────────────────────────────────────
 
 @app.get("/api/define", response_model=DefineOut)
-def define(word: str = Query(min_length=1)) -> DefineOut:
+def define(response: Response, word: str = Query(min_length=1)) -> DefineOut:
+    # The lookup itself is sub-millisecond; a tap costs a round trip to this
+    # server and nothing else. CC-CEDICT is vendored and never changes, so let
+    # the browser keep answers indefinitely and re-taps cost no network at all.
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return DefineOut(**dictionary.define(word))
 
 

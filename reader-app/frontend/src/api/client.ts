@@ -257,6 +257,11 @@ export interface GlobalChapterPattern {
   builtin: boolean;
 }
 
+// Definitions never change (CC-CEDICT is vendored), and the same words recur
+// constantly while reading, so keep answers for the session. A tap is otherwise
+// a full round trip to the backend for a sub-millisecond lookup.
+const defineCache = new Map<string, DefineOut>();
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await apiFetch(url);
   if (!res.ok) throw await responseError(res);
@@ -363,8 +368,18 @@ export const api = {
     deleteJSON<ChapterPatternResult>(
       `/api/novel/${encodeId(nid)}/chapter-pattern`,
     ),
-  define: (word: string) =>
-    getJSON<DefineOut>(`/api/define?word=${encodeURIComponent(word)}`),
+  cachedDefinition: (word: string) => defineCache.get(word),
+  define: async (word: string) => {
+    const hit = defineCache.get(word);
+    if (hit) return hit;
+    // No auth header: /api/define is public, and adding one would make this a
+    // non-simple CORS request that needs a preflight round trip of its own.
+    const res = await fetch(apiUrl(`/api/define?word=${encodeURIComponent(word)}`));
+    if (!res.ok) throw await responseError(res);
+    const data = (await res.json()) as DefineOut;
+    defineCache.set(word, data);
+    return data;
+  },
   recommend: (q: string, n = 12, category?: string) =>
     getJSON<{ results: RecItem[]; error?: string }>(
       `/api/recommend?q=${encodeURIComponent(q)}&n=${n}` +

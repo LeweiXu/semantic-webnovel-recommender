@@ -24,6 +24,14 @@ export function DefinitionPopup({ target, onClose }: Props) {
       setData(null);
       return;
     }
+    // Read the cache synchronously so an already-seen word paints with the
+    // popup instead of flashing "…" for a frame first.
+    const cached = api.cachedDefinition(target.word);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     setLoading(true);
     api

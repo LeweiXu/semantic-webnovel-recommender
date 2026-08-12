@@ -16,7 +16,7 @@ from recsys.catalog import CatalogRecord
 from recsys.store import NovelRecord
 from scraper import parse_landing
 from webnovel.downloads import catalogue_urls
-from webnovel.library import Chapter, local_chapters, local_synopsis
+from webnovel.library import MAX_CHAPTER_CHARS, Chapter, local_chapters, local_synopsis
 from webnovel.targets import resolve_target
 
 import download
@@ -127,6 +127,36 @@ Second body
             chapters = local_chapters(path)
         self.assertTrue(chapters)
         self.assertTrue(all(chapter.title.startswith("Part ") for chapter in chapters))
+
+    def test_undetected_run_is_split_into_bounded_parts(self) -> None:
+        # The run below has no heading the detector recognises (an uploaded file
+        # whose chapter breaks aren't marked), so it all lands in 第1章's body.
+        # Left whole that block is too big for the reader to annotate, so it has
+        # to come back as bounded parts.
+        buried = "\n\n".join(f"未标记段落{n}\n\n{'字' * 900}" for n in range(1, 16))
+        text = (
+            "标题：Test\n作者：A\n来源：https://example.test/book\n\n"
+            f"第1章 One\n\n{buried}\n\n第2章 Two\n\n短正文\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "novel.txt"
+            path.write_text(text, encoding="utf-8")
+            chapters = local_chapters(path)
+
+        titles = [chapter.title for chapter in chapters]
+        self.assertEqual(titles[0], "第1章 One")
+        # The oversized first chapter became numbered continuation parts.
+        self.assertIn("第1章 One (2)", titles)
+        self.assertIn("第2章 Two", titles)
+        # Every part is small enough for the reader to render with pinyin/ruby.
+        for chapter in chapters:
+            self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS)
+        # Normal-length chapters are never split into parts.
+        self.assertEqual(titles.count("第2章 Two"), 1)
+        self.assertNotIn("第2章 Two (2)", titles)
+        # No text is lost or duplicated by the re-split.
+        rejoined = "".join(chapter.body for chapter in chapters)
+        self.assertEqual(rejoined.count("字" * 900), 15)
 
     def test_saved_file_extracts_synopsis_after_preamble(self) -> None:
         text = """标题：Test

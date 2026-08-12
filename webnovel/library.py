@@ -25,6 +25,10 @@ class Chapter:
 
 FALLBACK_BLOCK_CHARS = 2_000
 MAX_HEADING_LENGTH = 100
+# A *detected* chapter this long is almost certainly not one chapter — it means
+# the heading detector missed the headings inside it and several chapters got
+# glued together. See _bounded() for why that has to be split.
+MAX_CHAPTER_CHARS = 12_000
 DEFAULT_HEADING_PATTERNS_PATH = Path(__file__).with_name("chapter_heading_patterns.json")
 
 
@@ -69,6 +73,32 @@ def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
     return blocks
 
 
+def _bounded(chapters: list[Chapter], limit: int = MAX_CHAPTER_CHARS) -> list[Chapter]:
+    """Re-split detected chapters that are far too long to be a single chapter.
+
+    When the heading detector misses a run of headings (common in uploaded
+    files), every one of those chapters lands in the preceding chapter's body.
+    The reader then has to render the whole run as one block, which blows past
+    its rich-text budget, so it silently falls back to plain paragraphs — no
+    pinyin, no clickable dictionary — on top of being an absurdly long page.
+
+    Cutting the block into bounded continuation parts keeps those features
+    working. Real chapters are nowhere near the limit and pass through
+    untouched, so this doesn't litter the contents list in the normal case.
+    """
+    bounded: list[Chapter] = []
+    for chapter in chapters:
+        if len(chapter.body) <= limit:
+            bounded.append(chapter)
+            continue
+        blocks = _text_blocks(chapter.body, limit)
+        bounded.extend(
+            Chapter(chapter.title if order == 1 else f"{chapter.title} ({order})", block)
+            for order, block in enumerate(blocks, 1)
+        )
+    return bounded
+
+
 def fallback_chapters(
     text: str,
     limit: int = FALLBACK_BLOCK_CHARS,
@@ -108,11 +138,11 @@ def chapters_from_patterns(
         title = lines[start].strip()
         content = "\n".join(lines[start + 1 : end]).strip()
         chapters.append(Chapter(title, content))
-    # Only chapterless fallback text is divided into fixed-size virtual parts.
-    # Splitting already-detected chapters creates fake duplicate TOC entries and
-    # arbitrary mid-chapter boundaries whenever a real chapter exceeds the
-    # fallback block size.
-    return chapters
+    # Detected chapters keep their own boundaries — splitting them at the small
+    # fallback block size would create fake duplicate TOC entries and arbitrary
+    # mid-chapter breaks in every normal book. Only blocks big enough to mean
+    # "the detector missed the headings in here" get cut up; see _bounded().
+    return _bounded(chapters)
 
 
 def chapters_from_pattern(

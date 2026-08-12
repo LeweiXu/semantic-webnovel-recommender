@@ -136,6 +136,18 @@ Second body
         self.assertTrue(chapters)
         self.assertTrue(all(chapter.title.startswith("Part ") for chapter in chapters))
 
+    def assertBoundedParts(self, chapters: list[Chapter], source: str) -> None:
+        """Parts round up to the nearest line, overshooting by at most one line."""
+        lines = source.split("\n")
+        longest_line = max(len(line) for line in lines)
+        whole_lines = {line for line in lines if line.strip()}
+        for chapter in chapters:
+            self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS + longest_line)
+            # A line cut in half wouldn't match any line of the source.
+            for line in chapter.body.split("\n"):
+                if line.strip():
+                    self.assertIn(line, whole_lines)
+
     def _write(self, directory: str, body: str) -> Path:
         path = Path(directory) / "novel.txt"
         path.write_text(
@@ -180,9 +192,10 @@ Second body
         # Normal chapters either side of the fused one are left alone.
         self.assertEqual(titles.count("第一章 One"), 1)
         self.assertNotIn("第二章 Two (2)", titles)
-        # Parts are small enough for the reader to render with pinyin/ruby.
-        for chapter in chapters:
-            self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS)
+        # Parts are small enough for the reader to render with pinyin/ruby, and
+        # each ends on a line boundary rather than mid-line.
+        fused_parts = [c for c in chapters if c.title.startswith("第三章 Three")]
+        self.assertBoundedParts(fused_parts, buried)
         # The chapter that isn't fused is left exactly as it was.
         self.assertEqual(titles.count("第十章 Ten"), 1)
         self.assertNotIn("第十章 Ten (2)", titles)
@@ -199,15 +212,16 @@ Second body
                 directory,
                 f"{buried}\n\n第16章 Sixteen\n\n短正文\n\n第17章 Seventeen\n\n短正文\n",
             )
-            chapters = chapters_from_text(read_text_smart(path))
+            source = read_text_smart(path)
+            chapters = chapters_from_text(source)
 
         titles = [chapter.title for chapter in chapters]
         self.assertIn("第16章 Sixteen", titles)
         self.assertIn("第17章 Seventeen", titles)
         # The front matter above 第16章 held chapters 1-15, so it was split.
         self.assertGreater(sum(1 for t in titles if t.startswith("Front matter")), 1, titles)
-        for chapter in chapters:
-            self.assertLessEqual(len(chapter.body), MAX_CHAPTER_CHARS)
+        front = [c for c in chapters if c.title.startswith("Front matter")]
+        self.assertBoundedParts(front, source)
         # The two real chapters are untouched.
         self.assertEqual(titles.count("第16章 Sixteen"), 1)
         self.assertEqual(titles.count("第17章 Seventeen"), 1)

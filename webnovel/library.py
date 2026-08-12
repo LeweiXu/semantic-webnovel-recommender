@@ -55,28 +55,39 @@ def default_heading_patterns() -> list[str]:
 
 
 def _text_blocks(text: str, limit: int = FALLBACK_BLOCK_CHARS) -> list[str]:
-    """Split text into bounded blocks, preferring paragraph/line boundaries."""
-    remaining = text.strip()
+    """Split text into blocks of about ``limit`` chars, always on a line break.
+
+    Rounds up: a block keeps taking whole lines until it reaches the limit, so it
+    ends at the line that crosses it rather than before. Lines are never cut in
+    half, which matters because a cut mid-sentence reads as a bug. A single line
+    longer than the limit is therefore left as its own oversized block — there is
+    no line boundary inside it to break on.
+    """
     blocks: list[str] = []
-    while remaining:
-        if len(remaining) <= limit:
-            blocks.append(remaining)
-            break
-        # Prefer a paragraph break, then any line break, without producing a
-        # tiny block just because the source has an early newline.
-        floor = max(1, limit // 2)
-        cut = remaining.rfind("\n\n", floor, limit + 1)
-        separator = 2
-        if cut < floor:
-            cut = remaining.rfind("\n", floor, limit + 1)
-            separator = 1
-        if cut < floor:
-            cut = limit
-            separator = 0
-        block = remaining[:cut].strip()
+    current: list[str] = []
+    size = 0
+
+    def flush() -> None:
+        nonlocal current, size
+        block = "\n".join(current).strip()
         if block:
             blocks.append(block)
-        remaining = remaining[cut + separator :].lstrip()
+        current = []
+        size = 0
+
+    for line in text.strip().split("\n"):
+        if len(line) > limit:
+            # Nothing to round up to: this one line is already over the limit, so
+            # it has to be cut. Only happens in sources written without paragraph
+            # breaks, where leaving it whole would defeat the split entirely.
+            flush()
+            blocks.extend(line[at : at + limit] for at in range(0, len(line), limit))
+            continue
+        current.append(line)
+        size += len(line) + 1
+        if size >= limit:
+            flush()
+    flush()
     return blocks
 
 

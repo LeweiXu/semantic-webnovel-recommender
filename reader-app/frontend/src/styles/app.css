@@ -16,6 +16,17 @@ body,
   margin: 0;
 }
 
+/* The document is the scroller now (see .app), so anything wider than the
+   screen stretches the layout viewport itself: a mobile browser zooms out to
+   fit it, and the full-width header then hangs off the side. The old inner
+   scroll container used to contain that for free. `clip` rather than `hidden`
+   because it doesn't create a scroll container, so the sticky topbar and the
+   reader's scroll tracking are unaffected. */
+html,
+body {
+  overflow-x: clip;
+}
+
 html,
 body {
   /* Paint the theme colour behind everything so any area a mobile browser
@@ -28,6 +39,10 @@ body {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Chinese wraps anywhere, but a long unbroken Latin run (a source URL in a
+     synopsis, say) would otherwise run off the side rather than wrap. Only
+     applies to words that would actually overflow. */
+  overflow-wrap: break-word;
 }
 
 button {

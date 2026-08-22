@@ -97,6 +97,7 @@ export interface NovelDetail {
   chapter_mode: "detected" | "fallback" | "custom";
   chapter_pattern: string | null;
   chapter_examples: string[];
+  download_path: string | null; // source .txt, when it can be downloaded
 }
 
 export interface ChapterPatternResult {
@@ -348,6 +349,19 @@ export const api = {
     const res = await apiFetch(`/api/file/download?path=${encodeURIComponent(path)}`);
     if (!res.ok) throw await responseError(res);
     return res.blob();
+  },
+  // Fetch a file and hand it to the browser as a save. It goes through fetch
+  // rather than a plain <a href> because the endpoint needs the auth header.
+  saveFile: async (path: string, name: string): Promise<void> => {
+    const blob = await api.downloadFile(path);
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = name;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
   },
   novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),
   chapter: (nid: string, idx: number, annotate: boolean) =>

@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from webnovel.library import list_library
+from webnovel.library import list_library, local_path
 
 import admin_jobs
 import annotate
@@ -262,9 +262,33 @@ def file_download(path: str = Query(...), _username: str = Depends(current_user)
         target = browse.safe_join(path)
     except ValueError:
         raise HTTPException(status_code=404, detail="No such file")
-    if not target.is_file() or browse.classify(target) != "doc":
+    # "text" (.txt) as well as "doc": the reader offers the source .txt of a
+    # novel for download, and the file explorer offers it per row.
+    if not target.is_file() or browse.classify(target) not in ("doc", "text"):
         raise HTTPException(status_code=404, detail="No such file")
     return FileResponse(target, filename=target.name)
+
+
+def _download_path(resolved) -> str | None:
+    """Browse-relative path of a novel's .txt, or None if it can't be served.
+
+    Downloads go through /api/file/download, which only serves paths under the
+    browse root. A metadata novel's file normally lives there (the browse root
+    defaults to library/), but not if NOVEL_BROWSE_DIR points elsewhere.
+    """
+    if resolved.record is not None:
+        target = local_path(resolved.record)
+    else:
+        try:
+            target = browse.safe_join(resolved.id)
+        except ValueError:
+            return None
+    if target is None or not target.is_file():
+        return None
+    try:
+        return target.resolve().relative_to(browse.BROWSE_DIR).as_posix()
+    except ValueError:
+        return None
 
 
 # ── File explorer ────────────────────────────────────────────────────────────
@@ -596,6 +620,7 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         chapter_mode=resolved.chapter_mode,
         chapter_pattern=resolved.chapter_pattern,
         chapter_examples=resolved.chapter_examples or [],
+        download_path=_download_path(resolved),
     )
 
 

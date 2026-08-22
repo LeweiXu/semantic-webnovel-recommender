@@ -1,4 +1,5 @@
-import { useSettings, useActiveSettings, type Theme, type ReadingMode } from "../store/settings";
+import { useEffect, useState } from "react";
+import { useSettings, useActiveSettings, type Theme } from "../store/settings";
 import { useReader } from "../store/reader";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -7,6 +8,56 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "night", label: "Night" },
   { id: "black", label: "Black" },
 ];
+
+// How long an armed confirmation waits before disarming itself.
+const CONFIRM_TIMEOUT_MS = 6000;
+
+// A button that asks before it acts. Both actions here throw away state the
+// user can't get back, so neither should fire on a single stray tap. Inline
+// rather than window.confirm: it matches the panel and works the same on a
+// phone, where a native dialog is easy to dismiss by accident.
+function ConfirmButton({
+  label,
+  confirmLabel,
+  onConfirm,
+}: {
+  label: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), CONFIRM_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
+  if (!armed) {
+    return (
+      <button className="btn-outline" onClick={() => setArmed(true)}>
+        {label}
+      </button>
+    );
+  }
+  return (
+    <div className="confirm-row" role="group" aria-label={`Confirm: ${label}`}>
+      <button
+        className="btn-outline is-danger"
+        autoFocus
+        onClick={() => {
+          setArmed(false);
+          onConfirm();
+        }}
+      >
+        {confirmLabel}
+      </button>
+      <button className="btn-outline" onClick={() => setArmed(false)}>
+        Cancel
+      </button>
+    </div>
+  );
+}
 
 export function SettingsPanel() {
   const s = useActiveSettings();
@@ -140,36 +191,34 @@ export function SettingsPanel() {
         />
       </div>
 
-      <div className="setting setting-block">
-        <label className="setting-label">Reading mode</label>
-        <div className="segmented">
-          {(["scroll", "paginate"] as ReadingMode[]).map((m) => (
-            <button
-              key={m}
-              className={`segment${s.mode === m ? " is-on" : ""}`}
-              disabled={m === "paginate"}
-              title={m === "paginate" ? "Coming soon" : ""}
-              onClick={() => set({ mode: m })}
-            >
-              {m === "scroll" ? "Scroll" : "Paginate"}
-              {m === "paginate" && <em className="soon">soon</em>}
-            </button>
-          ))}
-        </div>
+      <div className="setting">
+        <label className="setting-label">Infinite scroll</label>
+        <button
+          className={`toggle${s.infiniteScroll ? " is-on" : ""}`}
+          role="switch"
+          aria-checked={s.infiniteScroll}
+          onClick={() => set({ infiniteScroll: !s.infiniteScroll })}
+        >
+          <span className="toggle-knob" />
+        </button>
       </div>
 
       <div className="setting setting-block">
-        <button className="btn-outline" onClick={() => reset()}>
-          Reset to defaults
-        </button>
+        <ConfirmButton
+          label="Reset to defaults"
+          confirmLabel="Reset settings"
+          onConfirm={() => reset()}
+        />
       </div>
 
       {novel && (
         <div className="setting setting-block">
           <label className="setting-label">Progress</label>
-          <button className="btn-outline" onClick={() => resetProgress()}>
-            Reset Progress To Current
-          </button>
+          <ConfirmButton
+            label="Reset Progress To Current"
+            confirmLabel="Reset progress"
+            onConfirm={() => void resetProgress()}
+          />
         </div>
       )}
 

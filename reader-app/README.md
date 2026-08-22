@@ -20,7 +20,7 @@ page is powered by a small bundled demo corpus (see **Demo corpus** below).
 │        ...                                     │     for its definition
 └──────────────────────────────────────────────┘
    ▲ left: library (currently reading + search + paste-to-download)
-   ▲ right: settings (pinyin, theme, text size, spacing, mode)
+   ▲ right: settings (pinyin, theme, text size, spacing, infinite scroll)
 ```
 
 ## Setup (one time)
@@ -59,12 +59,17 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
   a search box over local metadata, and a field that accepts a pasted
   `52shuku.net` novel URL to download a new title on demand (live progress).
 - **Settings (right, or press `S`)**: pinyin on/off, theme (paper / sepia /
-  night), text size, line spacing, column width, and reading mode. Scroll mode
-  is active; paginate is planned.
-- **Reading**: scroll continuously; chapters load as you reach them. Click any
-  word for its pinyin and definition. Your position saves automatically.
+  night), text size, line spacing, column width, and infinite scroll. The two
+  reset buttons ask before they act.
+- **Reading**: one chapter at a time by default, with back / contents / forward
+  at the foot of the page. Turn on infinite scroll to have chapters load
+  continuously as you reach them instead. Click any word for its pinyin and
+  definition. Your position saves automatically, and paging back never rewinds
+  it.
 - A novel must be **downloaded** to read it. Use the library search/paste-link,
   or the CLI: `python download.py novel "<title or URL>"`.
+- A novel's own page links out to its source and offers its `.txt` for
+  download; the file explorer offers the same per row.
 
 ## How progress is shared
 

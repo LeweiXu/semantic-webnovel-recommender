@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type Theme = "paper" | "sepia" | "night" | "black";
-export type ReadingMode = "scroll" | "paginate";
 export type Profile = "desktop" | "mobile";
 
 // The reader settings, held independently per profile so a phone/tablet keeps
@@ -16,11 +15,14 @@ export interface ProfileSettings {
   tracking: number; // letter-spacing between characters, in em
   measure: number; // column width in rem
   contrast: number; // primary text/background contrast, 50-150%; 100 is theme default
-  mode: ReadingMode;
+  // On: chapters stream in as you reach the fold, one endless page.
+  // Off (default): one chapter at a time, with back/contents/forward at the foot.
+  infiniteScroll: boolean;
 }
 
 export const SETTINGS_KEYS: (keyof ProfileSettings)[] = [
-  "theme", "pinyin", "synopsisPinyin", "fontSize", "leading", "tracking", "measure", "contrast", "mode",
+  "theme", "pinyin", "synopsisPinyin", "fontSize", "leading", "tracking", "measure",
+  "contrast", "infiniteScroll",
 ];
 
 const DESKTOP_DEFAULTS: ProfileSettings = {
@@ -32,7 +34,7 @@ const DESKTOP_DEFAULTS: ProfileSettings = {
   tracking: 0.04,
   measure: 70,
   contrast: 100,
-  mode: "scroll",
+  infiniteScroll: false,
 };
 
 // Tuned for phones out of the box: a touch smaller and tighter than desktop.
@@ -45,7 +47,7 @@ const MOBILE_DEFAULTS: ProfileSettings = {
   tracking: 0.02,
   measure: 30,
   contrast: 100,
-  mode: "scroll",
+  infiniteScroll: false,
 };
 
 export const PROFILE_DEFAULTS: Record<Profile, ProfileSettings> = {
@@ -83,18 +85,31 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: "reader:settings",
-      version: 2,
+      version: 3,
       partialize: (s) => ({ desktop: s.desktop, mobile: s.mobile, profile: s.profile }),
       // v0/v1 stored a single flat settings blob. Carry it into the desktop
       // profile; mobile starts from its own defaults.
       migrate: (persisted: any, version: number) => {
-        if (!persisted || version >= 2) return persisted;
+        if (!persisted) return persisted;
+        // v2 -> v3: the dead "mode" placeholder became a real infiniteScroll
+        // setting. Nobody could ever select the old value, so just fill in the
+        // new default rather than trying to carry anything across.
+        if (version >= 2) {
+          if (version < 3) {
+            for (const profile of ["desktop", "mobile"] as const) {
+              if (!persisted[profile]) continue;
+              delete persisted[profile].mode;
+              persisted[profile].infiniteScroll = false;
+            }
+          }
+          return persisted;
+        }
         const flat: Partial<ProfileSettings> = {};
         for (const key of SETTINGS_KEYS) {
           if (persisted[key] !== undefined) (flat as any)[key] = persisted[key];
         }
         return {
-          desktop: { ...DESKTOP_DEFAULTS, ...flat },
+          desktop: { ...DESKTOP_DEFAULTS, ...flat, infiniteScroll: false },
           mobile: { ...MOBILE_DEFAULTS },
           profile: "desktop",
         };

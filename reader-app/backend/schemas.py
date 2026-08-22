@@ -112,6 +112,8 @@ class NovelDetail(BaseModel):
     chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
     chapter_pattern: str | None = None
     chapter_examples: list[str] = []
+    # Browse-relative path of the source .txt, when it can be downloaded.
+    download_path: str | None = None
 
 
 class ChapterContent(BaseModel):

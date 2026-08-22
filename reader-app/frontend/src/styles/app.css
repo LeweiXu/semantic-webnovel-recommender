@@ -352,8 +352,31 @@ button {
   gap: 6px;
   margin-top: 14px;
 }
-.novel-page-read {
+.novel-page-actions {
   margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.novel-page-source {
+  margin: 12px 0 0;
+  font-size: 0.82rem;
+}
+.novel-page-source a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--hairline-strong);
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.novel-page-source a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.novel-page-error {
+  margin: 10px 0 0;
+  color: var(--accent);
+  font-size: 0.8rem;
 }
 .novel-page-section {
   margin-top: 28px;
@@ -485,6 +508,27 @@ rt.rt-hidden {
   letter-spacing: 0.4em;
   margin-top: 48px;
   font-size: 0.8rem;
+}
+
+/* Chapter-by-chapter navigation, shown when infinite scroll is off. */
+.chapter-nav {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 44px;
+  padding-top: 22px;
+  border-top: 1px solid var(--hairline);
+}
+.chapter-nav .btn-outline {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+.chapter-nav .btn-outline:disabled {
+  color: var(--muted);
+  border-color: var(--hairline);
+  cursor: default;
 }
 
 /* Lazy chapter placeholder */
@@ -1102,16 +1146,6 @@ rt.rt-hidden {
   color: var(--muted);
   cursor: default;
 }
-.soon {
-  font-style: normal;
-  font-size: 0.6rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-left: 5px;
-  vertical-align: 1px;
-}
-
 /* Range inputs */
 input[type="range"] {
   width: 100%;
@@ -1950,6 +1984,10 @@ input[type="range"]::-moz-range-thumb {
   transition: border-color 0.2s var(--ease), color 0.2s var(--ease);
 }
 .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+.btn-outline.is-danger { border-color: var(--accent); color: var(--accent); }
+/* Two-step confirmation for the destructive settings actions. */
+.confirm-row { display: flex; gap: 8px; }
+.confirm-row .btn-outline { flex: 1; }
 .setting-hint { margin: 8px 0 0; color: var(--muted); font-size: 0.76rem; line-height: 1.5; }
 
 /* ── Admin command history ──────────────────────────────────────────────── */

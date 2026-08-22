@@ -35,7 +35,7 @@ PROFILES = ("desktop", "mobile")
 ALLOWED_KEYS = frozenset(
     {
         "theme", "pinyin", "synopsisPinyin", "fontSize", "leading", "tracking",
-        "measure", "contrast", "mode",
+        "measure", "contrast", "infiniteScroll",
     }
 )
 

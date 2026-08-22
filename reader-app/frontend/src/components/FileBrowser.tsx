@@ -24,20 +24,6 @@ function fmtSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Fetch a downloadable file and save it through a temporary anchor (the blob
-// carries the auth header a plain link can't).
-async function saveDoc(entry: BrowseEntry) {
-  const blob = await api.downloadFile(entry.path);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = entry.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 export function FileBrowser({
   initialPath = "",
   onChange,
@@ -105,9 +91,15 @@ export function FileBrowser({
   };
 
   const downloadEntry = (entry: BrowseEntry) => {
-    saveDoc(entry)
+    api.saveFile(entry.path, entry.name)
       .then(() => addEntry(entry))
       .catch(() => {});
+  };
+
+  // A .txt row already has its own "add to library" button, so downloading one
+  // is just a save — it shouldn't also shelve the novel.
+  const saveEntry = (entry: BrowseEntry) => {
+    api.saveFile(entry.path, entry.name).catch(() => {});
   };
 
   return (
@@ -178,14 +170,24 @@ export function FileBrowser({
                 <span className="fb-size">{fmtSize(entry.size)}</span>
               </button>
               {entry.kind === "text" && (
-                <button
-                  className="fb-action"
-                  onClick={() => addEntry(entry)}
-                  disabled={added.has(entry.path)}
-                  title="Add to your library"
-                >
-                  {added.has(entry.path) ? "✓" : "＋"}
-                </button>
+                <>
+                  <button
+                    className="fb-action"
+                    onClick={() => saveEntry(entry)}
+                    title="Download this .txt"
+                    aria-label={`Download ${entry.name}`}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    className="fb-action"
+                    onClick={() => addEntry(entry)}
+                    disabled={added.has(entry.path)}
+                    title="Add to your library"
+                  >
+                    {added.has(entry.path) ? "✓" : "＋"}
+                  </button>
+                </>
               )}
               {entry.kind === "doc" && (
                 <button

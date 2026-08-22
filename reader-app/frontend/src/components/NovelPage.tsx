@@ -22,6 +22,7 @@ export function NovelPage() {
   const [novel, setNovel] = useState<NovelDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [synopsisOpen, setSynopsisOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -41,6 +42,7 @@ export function NovelPage() {
   if (!novel) return <div className="stage-note">Opening…</div>;
 
   const resumeLabel = novel.position > 0 ? `Continue · ch ${novel.position + 1}` : "Start reading";
+  const downloadName = `${novel.download_path?.split("/").pop() ?? `${novel.title}.txt`}`;
   const long = novel.synopsis.length > SYNOPSIS_CAP;
   const synopsisText = long && !synopsisOpen
     ? `${novel.synopsis.slice(0, SYNOPSIS_CAP)}…`
@@ -63,9 +65,33 @@ export function NovelPage() {
               ))}
             </div>
           )}
-          <button className="btn-seal novel-page-read" onClick={() => openNovel(novel.slug)}>
-            {resumeLabel}
-          </button>
+          <div className="novel-page-actions">
+            <button className="btn-seal" onClick={() => openNovel(novel.slug)}>
+              {resumeLabel}
+            </button>
+            {novel.download_path && (
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setSaveError(null);
+                  api
+                    .saveFile(novel.download_path!, downloadName)
+                    .catch((e) => setSaveError(e?.message ?? "Download failed"));
+                }}
+              >
+                Download .txt
+              </button>
+            )}
+          </div>
+          {saveError && <p className="novel-page-error">{saveError}</p>}
+          {/* Raw file-explorer novels key on a path, not a real source url. */}
+          {/^https?:\/\//.test(novel.url) && (
+            <p className="novel-page-source">
+              <a href={novel.url} target="_blank" rel="noopener noreferrer">
+                View source page ↗
+              </a>
+            </p>
+          )}
         </header>
 
         {novel.synopsis && (

@@ -213,7 +213,10 @@ export function ScrollReader() {
   const jumpTarget = useReader((s) => s.jumpTarget);
   const clearJump = useReader((s) => s.clearJump);
   const showSynopsis = useReader((s) => s.showSynopsis);
+  const goToChapter = useReader((s) => s.goToChapter);
+  const toggleToc = useReader((s) => s.toggleToc);
   const active = useActiveSettings();
+  const infiniteScroll = active.infiniteScroll;
   // English novels have no pinyin/ruby (tokens come back plain), so force both
   // off regardless of the setting — keeps the extra ruby line-height off too.
   const isEnglish = novel.language === "en";
@@ -291,6 +294,16 @@ export function ScrollReader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpTarget]);
 
+  // Switching infinite scroll off mid-read leaves several chapters mounted.
+  // Drop back to the one being read, anchored so the page doesn't jump.
+  useEffect(() => {
+    if (infiniteScroll || loaded.length <= 1) return;
+    const el = sections.current.get(current);
+    if (el) anchor.current = { idx: current, top: relTop(el) };
+    setLoaded([current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infiniteScroll, loaded.length, current]);
+
   // Apply pending anchor correction / land restore after the window renders.
   useLayoutEffect(() => {
     if (pendingLand.current !== null) {
@@ -362,6 +375,11 @@ export function ScrollReader() {
       setTop(topC, topL);
       writeUrl(readerPath(novel.slug, topC), true);
 
+      // Everything below grows and shrinks the mounted window as you read. With
+      // infinite scroll off exactly one chapter is mounted and the foot nav
+      // moves between them, so none of it applies.
+      if (!infiniteScroll) return;
+
       const lo = loaded[0];
       const hi = loaded[loaded.length - 1];
 
@@ -420,6 +438,7 @@ export function ScrollReader() {
     };
   }, [
     chromeVisible,
+    infiniteScroll,
     loaded,
     current,
     novel.nid,
@@ -478,6 +497,27 @@ export function ScrollReader() {
           })}
           {loaded[loaded.length - 1] === total - 1 && (
             <footer className="reading-end">· 完 ·</footer>
+          )}
+          {!infiniteScroll && loaded.length > 0 && (
+            <nav className="chapter-nav" aria-label="Chapter navigation">
+              <button
+                className="btn-outline"
+                disabled={loaded[0] <= 0}
+                onClick={() => goToChapter(loaded[0] - 1)}
+              >
+                ← Previous
+              </button>
+              <button className="btn-outline" onClick={() => toggleToc(true)}>
+                Contents
+              </button>
+              <button
+                className="btn-outline"
+                disabled={loaded[0] >= total - 1}
+                onClick={() => goToChapter(loaded[0] + 1)}
+              >
+                Next →
+              </button>
+            </nav>
           )}
         </div>
       )}

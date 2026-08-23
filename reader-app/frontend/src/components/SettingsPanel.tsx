@@ -96,12 +96,15 @@ export function SettingsPanel() {
     api
       .joinLines(novel.slug)
       .then((r) => {
+        const done = [
+          r.joins && `joined ${r.joins} split ${r.joins === 1 ? "sentence" : "sentences"}`,
+          r.splits && `put ${r.splits} author ${r.splits === 1 ? "note" : "notes"} back`,
+        ].filter(Boolean);
         say(
           "join",
-          r.joins === 0
-            ? "Nothing to join — every line already ends a sentence."
-            : `Joined ${r.joins} split ${r.joins === 1 ? "sentence" : "sentences"}. `
-              + `${r.chapters} chapters. Reopen the novel to see it.`,
+          done.length === 0
+            ? "Nothing to fix — the file is already clean."
+            : `${done.join(", ")}. ${r.chapters} chapters. Reopen the novel to see it.`,
         );
       })
       .catch((e) => say("join", e?.message ?? "Could not edit the file", true))

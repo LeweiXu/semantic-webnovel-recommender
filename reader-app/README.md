@@ -70,8 +70,11 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
   that simply forgot a closing mark is left alone rather than swallowing the
   rest of the chapter. Chapter headings and `作者有话要说` markers are left
   strictly alone in both directions, so the chapter structure survives and an
-  author's note never gets pulled onto its own marker. The untouched original is
-  kept beside the file as a hidden `.<name>.bak`.
+  author's note never gets pulled onto its own marker. A file damaged by an
+  earlier run (before markers were exempt) repairs itself the next time the
+  button is pressed: the marker is split back onto its own line, which restores
+  exactly what the current rules produce. The untouched original is kept beside
+  the file as a hidden `.<name>.bak`, and an existing one is never overwritten.
 - **Reading**: one chapter at a time by default, with back / contents / forward
   at the foot of the page. Turn on infinite scroll to have chapters load
   continuously as you reach them instead. Click any word for its pinyin and

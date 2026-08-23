@@ -103,6 +103,7 @@ export interface NovelDetail {
 export interface JoinLinesResult {
   ok: boolean;
   joins: number;
+  splits: number; // bad merges from an earlier run that were undone
   chapters: number;
   backup: string | null;
 }

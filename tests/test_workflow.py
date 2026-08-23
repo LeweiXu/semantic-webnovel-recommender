@@ -246,7 +246,7 @@ Second body
             "第一章 开端\n\n这是第一句\n被拆成了两行。\n\n"
             "这一行以句号结束。\n\n第二章 继续\n\n短正文。\n"
         )
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 1)
         self.assertIn("这是第一句被拆成了两行。", joined)
         # A line that already ends in punctuation is left exactly as it was.
@@ -261,7 +261,7 @@ Second body
             "第一章 开端\n\n正文一。\n\n最后一句没有标点\n\n"
             "第二章 继续\n\n正文二。\n"
         )
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 0, joined)
         self.assertEqual(
             [c.title for c in chapters_from_text(joined)],
@@ -281,7 +281,7 @@ Second body
             "第一章 开端\n\n她哭着说：“我也想走，但起不来……\n\n腿软了。”\n\n"
             "第二章 继续\n\n正文。\n"
         )
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 1)
         self.assertIn("她哭着说：“我也想走，但起不来……腿软了。”", joined)
         self.assertEqual(join_wrapped_lines(joined)[1], 0)
@@ -291,13 +291,13 @@ Second body
         # the chapter into one line, so an unresolved run is left untouched.
         tail = "\n\n".join(f"第{n}段正常结束。" for n in range(1, 8))
         text = f"第一章 开端\n\n他说：“忘了收尾。\n\n{tail}\n\n第二章 继续\n\n正文。\n"
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 0, joined)
         self.assertEqual(joined, text)
 
     def test_join_wrapped_lines_will_not_chase_a_quote_past_a_heading(self) -> None:
         text = "第一章 开端\n\n他说：“没有收尾\n\n第二章 继续\n\n正文。\n"
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 0, joined)
         self.assertEqual(
             [c.title for c in chapters_from_text(joined)],
@@ -311,7 +311,7 @@ Second body
             "第一章 开端\n\n正文。\n\n作者有话要说\n\n今天更新晚了\n抱歉。\n\n"
             "第二章 继续\n\n正文。\n"
         )
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         lines = joined.split("\n")
         self.assertIn("作者有话要说", lines)
         # It neither absorbs the note nor gets absorbed by the line above it.
@@ -321,12 +321,29 @@ Second body
         self.assertIn("今天更新晚了抱歉。", lines)
         self.assertEqual(count, 1)
 
+    def test_join_wrapped_lines_undoes_an_earlier_bad_note_merge(self) -> None:
+        # A file already damaged by a run from before markers were exempt: the
+        # marker swallowed the note. Running again must put it back.
+        damaged = (
+            "第一章 开端\n\n正文。\n\n作者有话要说今天更新晚了抱歉。\n\n"
+            "第二章 继续\n\n正文。\n"
+        )
+        result = join_wrapped_lines(damaged)
+        lines = result.text.split("\n")
+        self.assertEqual(result.splits, 1)
+        self.assertIn("作者有话要说", lines)
+        self.assertIn("今天更新晚了抱歉。", lines)
+        # Repairing is stable: a further run changes nothing.
+        again = join_wrapped_lines(result.text)
+        self.assertEqual((again.splits, again.joins), (0, 0))
+        self.assertEqual(again.text, result.text)
+
     def test_join_wrapped_lines_preserves_every_character(self) -> None:
         text = (
             "第一章 开端\n\n一句被拆开\n\n\n又拆一次\n继续到这里。\n\n"
             "第二章 继续\n\n正文。\n"
         )
-        joined, count = join_wrapped_lines(text)
+        joined, count, _ = join_wrapped_lines(text)
         self.assertEqual(count, 2)
         strip_ws = lambda s: re.sub(r"\s+", "", s)
         self.assertEqual(strip_ws(joined), strip_ws(text))

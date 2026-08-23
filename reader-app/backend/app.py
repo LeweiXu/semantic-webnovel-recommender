@@ -587,13 +587,13 @@ def join_lines(nid: str, _username: str = Depends(require_admin)) -> JoinLinesOu
         raise HTTPException(status_code=404, detail="No editable .txt for this novel")
     target = browse.safe_join(relative)
     original = read_text_smart(target)
-    repaired, joins = join_wrapped_lines(
+    repaired, joins, splits = join_wrapped_lines(
         original,
         chapter_patterns.get(resolved.url),
         chapter_patterns.effective_patterns(),
     )
     backup_name = None
-    if joins:
+    if joins or splits:
         # Keep the untouched original once, as a dotfile so the file explorer
         # (which hides dotfiles) doesn't list it. Never overwrite an existing
         # one: a second run would otherwise replace the true original with an
@@ -609,7 +609,8 @@ def join_lines(nid: str, _username: str = Depends(require_admin)) -> JoinLinesOu
         novels.invalidate_chapters(resolved.url, resolved.id)
     refreshed = _resolve_or_404(nid)
     return JoinLinesOut(
-        ok=True, joins=joins, chapters=len(refreshed.chapters), backup=backup_name,
+        ok=True, joins=joins, splits=splits,
+        chapters=len(refreshed.chapters), backup=backup_name,
     )
 
 

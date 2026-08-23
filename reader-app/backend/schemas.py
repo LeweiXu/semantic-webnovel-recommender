@@ -128,6 +128,7 @@ class ChapterContent(BaseModel):
 class JoinLinesOut(BaseModel):
     ok: bool
     joins: int          # sentences rejoined
+    splits: int         # bad merges from an earlier run undone
     chapters: int       # chapter count after the rewrite (should be unchanged)
     backup: str | None  # where the untouched original was kept, if one was made
 

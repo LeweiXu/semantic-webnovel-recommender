@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from typing import NamedTuple
 from pathlib import Path
 
 from curl_cffi import requests as cffi_requests
@@ -471,11 +472,41 @@ def _quote_closing_run(
     return None
 
 
+class JoinResult(NamedTuple):
+    text: str
+    joins: int   # lines pulled up onto an unfinished line
+    splits: int  # bad merges undone (see _split_note_markers)
+
+
+def _split_note_markers(lines: list[str]) -> tuple[list[str], int]:
+    """Undo an earlier run that merged a note onto its own marker.
+
+    Before markers were exempt, each one absorbed the note beneath it. Putting
+    the marker back on its own line restores exactly what the current rules
+    would have produced: the marker holds no quotes and doesn't change how the
+    line ends, so the note text after it was joined the same way either way.
+    """
+    restored: list[str] = []
+    splits = 0
+    for line in lines:
+        stripped = line.strip()
+        marker = next(
+            (m for m in _NOTE_PREFIXES if stripped.startswith(m) and stripped != m),
+            None,
+        )
+        if marker is None:
+            restored.append(line)
+            continue
+        restored.extend([marker, "", stripped[len(marker):].lstrip()])
+        splits += 1
+    return restored, splits
+
+
 def join_wrapped_lines(
     text: str,
     heading_pattern: str | None = None,
     heading_patterns: list[str] | None = None,
-) -> tuple[str, int]:
+) -> JoinResult:
     """Repair sentences that a source split across lines. Returns (text, joins).
 
     Two things mark a line as unfinished:
@@ -497,6 +528,9 @@ def join_wrapped_lines(
     )
     heading_res = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    # Undo bad merges from an earlier run first, so this pass sees the text
+    # as it should have been and the button repairs itself when clicked again.
+    lines, splits = _split_note_markers(lines)
 
     joined: list[str] = []
     joins = 0
@@ -532,7 +566,7 @@ def join_wrapped_lines(
             for following in following_lines:
                 joined[-1] = joined[-1].rstrip() + following
                 joins += 1
-    return "\n".join(joined), joins
+    return JoinResult("\n".join(joined), joins, splits)
 
 
 def chapters_from_text(

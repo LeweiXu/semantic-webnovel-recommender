@@ -384,14 +384,24 @@ def read_text_smart(path: Path) -> str:
 
 
 # Lines that must keep a line of their own when re-wrapping: chapter headings,
-# the generated preamble fields, and the storage divider rows.
+# the generated preamble fields, the storage divider rows, and the markers
+# below.
 _PREAMBLE_PREFIXES = ("标题：", "作者：", "来源：", "简介", "分类", "状态", "标签")
+
+
+# Author's-note markers. These sit on their own line and end on a character,
+# so without this each would swallow the first line of the note below it.
+_NOTE_PREFIXES = ("作者有话要说",)
 
 
 def _is_structural_line(stripped: str, heading_res: list[re.Pattern]) -> bool:
     if not stripped:
         return False
-    if "═" in stripped or stripped.startswith(_PREAMBLE_PREFIXES):
+    if (
+        "═" in stripped
+        or stripped.startswith(_PREAMBLE_PREFIXES)
+        or stripped.startswith(_NOTE_PREFIXES)
+    ):
         return True
     return (
         len(stripped) <= MAX_HEADING_LENGTH
@@ -475,7 +485,8 @@ def join_wrapped_lines(
       in punctuation (an ellipsis mid-speech, say).
 
     Either way the following non-empty line is pulled up, repeatedly, until the
-    line is complete. Chapter headings, preamble fields and divider rows are left
+    line is complete. Chapter headings, preamble fields, divider rows and author's-note
+    markers are left
     strictly alone, in both directions: they neither absorb the line below nor
     get absorbed by the line above. Without that, every heading that ends on a
     character — most of them — would swallow its first paragraph and stop being

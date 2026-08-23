@@ -68,8 +68,9 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
   because it opens a quote it never closes, which happens even on lines that do
   end in punctuation. An unclosed quote is only chased a few lines; a source
   that simply forgot a closing mark is left alone rather than swallowing the
-  rest of the chapter. Chapter headings are left strictly alone in both
-  directions, so the chapter structure survives, and the untouched original is
+  rest of the chapter. Chapter headings and `作者有话要说` markers are left
+  strictly alone in both directions, so the chapter structure survives and an
+  author's note never gets pulled onto its own marker. The untouched original is
   kept beside the file as a hidden `.<name>.bak`.
 - **Reading**: one chapter at a time by default, with back / contents / forward
   at the foot of the page. Turn on infinite scroll to have chapters load

@@ -304,6 +304,23 @@ Second body
             ["第一章 开端", "第二章 继续"],
         )
 
+    def test_join_wrapped_lines_exempts_author_note_markers(self) -> None:
+        # The marker sits on its own line and ends on a character, so without an
+        # exemption it would swallow the first line of the note beneath it.
+        text = (
+            "第一章 开端\n\n正文。\n\n作者有话要说\n\n今天更新晚了\n抱歉。\n\n"
+            "第二章 继续\n\n正文。\n"
+        )
+        joined, count = join_wrapped_lines(text)
+        lines = joined.split("\n")
+        self.assertIn("作者有话要说", lines)
+        # It neither absorbs the note nor gets absorbed by the line above it.
+        self.assertFalse([l for l in lines if l.startswith("作者有话要说") and l != "作者有话要说"])
+        self.assertIn("正文。", lines)
+        # The note's own wrapped sentence is still repaired.
+        self.assertIn("今天更新晚了抱歉。", lines)
+        self.assertEqual(count, 1)
+
     def test_join_wrapped_lines_preserves_every_character(self) -> None:
         text = (
             "第一章 开端\n\n一句被拆开\n\n\n又拆一次\n继续到这里。\n\n"

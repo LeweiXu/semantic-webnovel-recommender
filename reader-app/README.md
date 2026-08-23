@@ -63,10 +63,14 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
   to defaults asks first; every action says whether it worked.
 - **Join Split Sentences** (admin only, while reading): some sources hard-wrap a
   sentence, leaving a line break in the middle of it. This rewrites the novel's
-  `.txt` in place, pulling any line that ends on a Han character up onto the
-  next one. Chapter headings are left strictly alone in both directions, so the
-  chapter structure survives, and the untouched original is kept beside the file
-  as a hidden `.<name>.bak`.
+  `.txt` in place, pulling the next line up onto any line that is unfinished —
+  either because it ends on a Han character (no closing punctuation at all), or
+  because it opens a quote it never closes, which happens even on lines that do
+  end in punctuation. An unclosed quote is only chased a few lines; a source
+  that simply forgot a closing mark is left alone rather than swallowing the
+  rest of the chapter. Chapter headings are left strictly alone in both
+  directions, so the chapter structure survives, and the untouched original is
+  kept beside the file as a hidden `.<name>.bak`.
 - **Reading**: one chapter at a time by default, with back / contents / forward
   at the foot of the page. Turn on infinite scroll to have chapters load
   continuously as you reach them instead. Click any word for its pinyin and

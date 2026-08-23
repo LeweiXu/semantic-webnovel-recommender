@@ -274,6 +274,36 @@ Second body
         self.assertIn("第二章 继续", lines)
         self.assertIn("最后一句没有标点", lines)
 
+    def test_join_wrapped_lines_closes_a_quote_left_open(self) -> None:
+        # This line ends in punctuation, so the Han-character rule ignores it.
+        # The unclosed opening quote is what marks it as wrapped mid-speech.
+        text = (
+            "第一章 开端\n\n她哭着说：“我也想走，但起不来……\n\n腿软了。”\n\n"
+            "第二章 继续\n\n正文。\n"
+        )
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 1)
+        self.assertIn("她哭着说：“我也想走，但起不来……腿软了。”", joined)
+        self.assertEqual(join_wrapped_lines(joined)[1], 0)
+
+    def test_join_wrapped_lines_leaves_a_quote_that_never_closes(self) -> None:
+        # A source that simply forgot a closing mark must not drag the rest of
+        # the chapter into one line, so an unresolved run is left untouched.
+        tail = "\n\n".join(f"第{n}段正常结束。" for n in range(1, 8))
+        text = f"第一章 开端\n\n他说：“忘了收尾。\n\n{tail}\n\n第二章 继续\n\n正文。\n"
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 0, joined)
+        self.assertEqual(joined, text)
+
+    def test_join_wrapped_lines_will_not_chase_a_quote_past_a_heading(self) -> None:
+        text = "第一章 开端\n\n他说：“没有收尾\n\n第二章 继续\n\n正文。\n"
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 0, joined)
+        self.assertEqual(
+            [c.title for c in chapters_from_text(joined)],
+            ["第一章 开端", "第二章 继续"],
+        )
+
     def test_join_wrapped_lines_preserves_every_character(self) -> None:
         text = (
             "第一章 开端\n\n一句被拆开\n\n\n又拆一次\n继续到这里。\n\n"

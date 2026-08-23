@@ -409,6 +409,58 @@ def _ends_mid_sentence(stripped: str) -> bool:
     return bool(stripped) and "一" <= stripped[-1] <= "鿿"
 
 
+# Quote marks that open and close a span of speech. A line that opens one and
+# never closes it was wrapped mid-quote, even when it ends on punctuation.
+_QUOTE_PAIRS = (("\u201c", "\u201d"), ("\u2018", "\u2019"), ("\u300c", "\u300d"), ("\u300e", "\u300f"))
+# How many following lines to consider when chasing an unclosed quote. Genuine
+# wraps close on the very next line; a source that simply forgot a closing mark
+# never closes, and without a cap that one line would swallow the rest of the
+# book. The run is only joined if it actually closes inside this window.
+MAX_QUOTE_LOOKAHEAD = 4
+
+
+def _quote_debt(text: str) -> dict[str, int]:
+    """How many of each quote mark are still open at the end of ``text``."""
+    return {
+        opener: text.count(opener) - text.count(closer)
+        for opener, closer in _QUOTE_PAIRS
+    }
+
+
+def _has_open_quote(debt: dict[str, int]) -> bool:
+    return any(count > 0 for count in debt.values())
+
+
+def _quote_closing_run(
+    debt: dict[str, int],
+    lines: list[str],
+    index: int,
+    heading_res: list[re.Pattern],
+) -> tuple[list[str], int] | None:
+    """The next lines that close an open quote, or None if it never closes.
+
+    All-or-nothing on purpose: joining a partial run would reflow the text
+    without fixing anything, and a stray unmatched quote in the source would
+    otherwise drag arbitrary paragraphs together.
+    """
+    pending = dict(debt)
+    taken: list[str] = []
+    look = index
+    while look < len(lines) and len(taken) < MAX_QUOTE_LOOKAHEAD:
+        stripped = lines[look].strip()
+        look += 1
+        if not stripped:
+            continue
+        if _is_structural_line(stripped, heading_res):
+            return None
+        taken.append(stripped)
+        for opener, closer in _QUOTE_PAIRS:
+            pending[opener] += stripped.count(opener) - stripped.count(closer)
+        if not _has_open_quote(pending):
+            return taken, look
+    return None
+
+
 def join_wrapped_lines(
     text: str,
     heading_pattern: str | None = None,
@@ -416,12 +468,18 @@ def join_wrapped_lines(
 ) -> tuple[str, int]:
     """Repair sentences that a source split across lines. Returns (text, joins).
 
-    A line ending on a Han character is unfinished, so the next non-empty line
-    is pulled up onto it (repeatedly, until the sentence closes). Chapter
-    headings, preamble fields and divider rows are left strictly alone, in both
-    directions: they neither absorb the line below nor get absorbed by the line
-    above. Without that, every heading that ends on a character — most of them —
-    would swallow its first paragraph and stop being detectable as a heading.
+    Two things mark a line as unfinished:
+
+    * it ends on a Han character, so there is no closing punctuation at all; or
+    * it opens a quote it never closes, which happens even on lines that do end
+      in punctuation (an ellipsis mid-speech, say).
+
+    Either way the following non-empty line is pulled up, repeatedly, until the
+    line is complete. Chapter headings, preamble fields and divider rows are left
+    strictly alone, in both directions: they neither absorb the line below nor
+    get absorbed by the line above. Without that, every heading that ends on a
+    character — most of them — would swallow its first paragraph and stop being
+    detectable as a heading.
     """
     patterns = [heading_pattern] if heading_pattern else (
         heading_patterns if heading_patterns is not None else default_heading_patterns()
@@ -438,18 +496,31 @@ def join_wrapped_lines(
         current = joined[-1].strip()
         if not current or _is_structural_line(current, heading_res):
             continue
-        while _ends_mid_sentence(joined[-1].strip()):
-            look = index
-            while look < len(lines) and not lines[look].strip():
-                look += 1
-            if look >= len(lines):
+        while True:
+            current = joined[-1].strip()
+            if _ends_mid_sentence(current):
+                look = index
+                while look < len(lines) and not lines[look].strip():
+                    look += 1
+                if look >= len(lines):
+                    break
+                following = lines[look].strip()
+                if _is_structural_line(following, heading_res):
+                    break
+                joined[-1] = joined[-1].rstrip() + following
+                joins += 1
+                index = look + 1
+                continue
+            debt = _quote_debt(current)
+            if not _has_open_quote(debt):
                 break
-            following = lines[look].strip()
-            if _is_structural_line(following, heading_res):
+            run = _quote_closing_run(debt, lines, index, heading_res)
+            if run is None:
                 break
-            joined[-1] = joined[-1].rstrip() + following
-            joins += 1
-            index = look + 1
+            following_lines, index = run
+            for following in following_lines:
+                joined[-1] = joined[-1].rstrip() + following
+                joins += 1
     return "\n".join(joined), joins
 
 

@@ -308,3 +308,74 @@ class ShelfTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JoinLinesEndpointTests(unittest.TestCase):
+    """The admin-only .txt repair route (POST /api/novel/{nid}/join-lines)."""
+
+    def _run(self, text: str):
+        from fastapi.testclient import TestClient
+        import app as backend_app
+        from auth import require_admin
+
+        directory = tempfile.TemporaryDirectory()
+        root = Path(directory.name)
+        target = root / "novel.txt"
+        target.write_text(text, encoding="utf-8")
+        with patch.object(browse, "BROWSE_DIR", root):
+            novels._chapter_cache.clear()
+            # Stand in for the admin dependency rather than creating an account.
+            backend_app.app.dependency_overrides[require_admin] = lambda: "lingwei"
+            try:
+                client = TestClient(backend_app.app)
+                response = client.post("/api/novel/novel.txt/join-lines")
+            finally:
+                backend_app.app.dependency_overrides.clear()
+                novels._chapter_cache.clear()
+        return response, target, directory
+
+    def test_join_rewrites_the_file_and_keeps_one_backup(self) -> None:
+        text = "第一章 开端\n\n这是第一句\n被拆成了两行。\n\n第二章 继续\n\n正文。\n"
+        response, target, directory = self._run(text)
+        with directory:
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["joins"], 1)
+            self.assertEqual(body["chapters"], 2)
+
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("这是第一句被拆成了两行。", written)
+            # The untouched original is kept as a dotfile, which the file
+            # explorer hides, so it never shows up as a stray entry.
+            backup = target.with_name(f".{target.name}.bak")
+            self.assertTrue(backup.exists())
+            self.assertEqual(backup.read_text(encoding="utf-8"), text)
+            self.assertTrue(body["backup"].startswith("."))
+            # No temp file left behind by the atomic swap.
+            self.assertFalse(target.with_name(f".{target.name}.tmp").exists())
+
+    def test_join_is_a_no_op_when_nothing_is_split(self) -> None:
+        text = "第一章 开端\n\n完整的一句话。\n\n第二章 继续\n\n正文。\n"
+        response, target, directory = self._run(text)
+        with directory:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["joins"], 0)
+            self.assertIsNone(response.json()["backup"])
+            # Nothing was written, so no backup and the file is byte-identical.
+            self.assertEqual(target.read_text(encoding="utf-8"), text)
+            self.assertFalse(target.with_name(f".{target.name}.bak").exists())
+
+    def test_join_requires_admin(self) -> None:
+        from fastapi.testclient import TestClient
+        import app as backend_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "novel.txt").write_text("第一章 开端\n\n正文。\n", encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root):
+                novels._chapter_cache.clear()
+                client = TestClient(backend_app.app)
+                # No credentials at all: the route must not run.
+                response = client.post("/api/novel/novel.txt/join-lines")
+                novels._chapter_cache.clear()
+        self.assertIn(response.status_code, (401, 403))

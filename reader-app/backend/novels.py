@@ -133,6 +133,13 @@ def chapters_for(url: str, record: NovelRecord) -> list[Chapter]:
     return chapters
 
 
+def invalidate_chapters(*keys: str) -> None:
+    """Drop cached chapters for a novel after its file changed on disk."""
+    with _cache_lock:
+        for key in keys:
+            _chapter_cache.pop(key, None)
+
+
 def trim_synopsis_at_first_chapter(
     synopsis: str,
     chapters: list[Chapter],

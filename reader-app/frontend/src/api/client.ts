@@ -100,6 +100,13 @@ export interface NovelDetail {
   download_path: string | null; // source .txt, when it can be downloaded
 }
 
+export interface JoinLinesResult {
+  ok: boolean;
+  joins: number;
+  chapters: number;
+  backup: string | null;
+}
+
 export interface ChapterPatternResult {
   pattern: string;
   matches: number;
@@ -364,6 +371,8 @@ export const api = {
     URL.revokeObjectURL(href);
   },
   novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),
+  joinLines: (nid: string) =>
+    postJSON<JoinLinesResult>(`/api/novel/${encodeId(nid)}/join-lines`),
   chapter: (nid: string, idx: number, annotate: boolean) =>
     getJSON<ChapterContent>(
       `/api/novel/${encodeId(nid)}/chapter/${idx}?annotate=${annotate ? 1 : 0}`,

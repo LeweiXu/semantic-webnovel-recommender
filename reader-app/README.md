@@ -59,8 +59,14 @@ Options: `--port N`, `--host H`, `--no-open`, `--rebuild`.
   a search box over local metadata, and a field that accepts a pasted
   `52shuku.net` novel URL to download a new title on demand (live progress).
 - **Settings (right, or press `S`)**: pinyin on/off, theme (paper / sepia /
-  night), text size, line spacing, column width, and infinite scroll. The two
-  reset buttons ask before they act.
+  night), text size, line spacing, column width, and infinite scroll. Resetting
+  to defaults asks first; every action says whether it worked.
+- **Join Split Sentences** (admin only, while reading): some sources hard-wrap a
+  sentence, leaving a line break in the middle of it. This rewrites the novel's
+  `.txt` in place, pulling any line that ends on a Han character up onto the
+  next one. Chapter headings are left strictly alone in both directions, so the
+  chapter structure survives, and the untouched original is kept beside the file
+  as a hidden `.<name>.bak`.
 - **Reading**: one chapter at a time by default, with back / contents / forward
   at the foot of the page. Turn on infinite scroll to have chapters load
   continuously as you reach them instead. Click any word for its pinyin and

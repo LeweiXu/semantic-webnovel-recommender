@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from webnovel.library import list_library, local_path
+from webnovel.library import join_wrapped_lines, list_library, local_path, read_text_smart
 
 import admin_jobs
 import annotate
@@ -37,7 +37,7 @@ from auth import current_user, optional_user, require_admin
 from ids import nid_decode, nid_encode
 from schemas import (
     BrowseListing, ChapterPatternIn, ChapterPatternOut, ChapterPatternPreviewIn,
-    ChapterStub, DefineOut, NovelDetail, ProgressIn, ProgressOut, ReadingItem,
+    ChapterStub, DefineOut, JoinLinesOut, NovelDetail, ProgressIn, ProgressOut, ReadingItem,
     SearchItem, ShelfItem,
 )
 
@@ -571,6 +571,45 @@ def set_progress(
         line=int(entry["line"]) if entry.get("line") is not None else None,
         anchor_version=int(entry.get("anchor_version", 2)),
         updated=entry.get("updated", ""),
+    )
+
+
+@app.post("/api/novel/{nid:path}/join-lines", response_model=JoinLinesOut)
+def join_lines(nid: str, _username: str = Depends(require_admin)) -> JoinLinesOut:
+    """Rejoin sentences the source hard-wrapped, editing the .txt in place.
+
+    Admin-only, because unlike everything else in the reader this rewrites a
+    file in the shared library rather than per-user state.
+    """
+    resolved = _resolve_or_404(nid)
+    relative = _download_path(resolved)
+    if relative is None:
+        raise HTTPException(status_code=404, detail="No editable .txt for this novel")
+    target = browse.safe_join(relative)
+    original = read_text_smart(target)
+    repaired, joins = join_wrapped_lines(
+        original,
+        chapter_patterns.get(resolved.url),
+        chapter_patterns.effective_patterns(),
+    )
+    backup_name = None
+    if joins:
+        # Keep the untouched original once, as a dotfile so the file explorer
+        # (which hides dotfiles) doesn't list it. Never overwrite an existing
+        # one: a second run would otherwise replace the true original with an
+        # already-edited copy.
+        backup = target.with_name(f".{target.name}.bak")
+        if not backup.exists():
+            backup.write_text(original, encoding="utf-8")
+        backup_name = backup.name
+        # Write beside the target and swap, so a failure can't truncate the book.
+        staged = target.with_name(f".{target.name}.tmp")
+        staged.write_text(repaired, encoding="utf-8")
+        os.replace(staged, target)
+        novels.invalidate_chapters(resolved.url, resolved.id)
+    refreshed = _resolve_or_404(nid)
+    return JoinLinesOut(
+        ok=True, joins=joins, chapters=len(refreshed.chapters), backup=backup_name,
     )
 
 

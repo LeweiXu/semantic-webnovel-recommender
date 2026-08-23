@@ -1988,6 +1988,14 @@ input[type="range"]::-moz-range-thumb {
 /* Two-step confirmation for the destructive settings actions. */
 .confirm-row { display: flex; gap: 8px; }
 .confirm-row .btn-outline { flex: 1; }
+/* Outcome message after a settings action ("that worked" / why it didn't). */
+.setting-note {
+  margin: 9px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.setting-note.is-bad { color: var(--accent); }
 .setting-hint { margin: 8px 0 0; color: var(--muted); font-size: 0.76rem; line-height: 1.5; }
 
 /* ── Admin command history ──────────────────────────────────────────────── */

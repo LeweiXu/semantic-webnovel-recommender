@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { api } from "../api/client";
+import { useAuth } from "../store/auth";
 import { useSettings, useActiveSettings, type Theme } from "../store/settings";
 import { useReader } from "../store/reader";
 
@@ -11,11 +13,13 @@ const THEMES: { id: Theme; label: string }[] = [
 
 // How long an armed confirmation waits before disarming itself.
 const CONFIRM_TIMEOUT_MS = 6000;
+// How long a "that worked" message stays up.
+const NOTICE_TIMEOUT_MS = 5000;
 
-// A button that asks before it acts. Both actions here throw away state the
-// user can't get back, so neither should fire on a single stray tap. Inline
-// rather than window.confirm: it matches the panel and works the same on a
-// phone, where a native dialog is easy to dismiss by accident.
+// A button that asks before it acts, for the two actions that can't be undone
+// from the panel. Inline rather than window.confirm: it matches the panel and
+// works the same on a phone, where a native dialog is easy to dismiss by
+// accident.
 function ConfirmButton({
   label,
   confirmLabel,
@@ -67,6 +71,42 @@ export function SettingsPanel() {
   const view = useReader((st) => st.view);
   const resetProgress = useReader((st) => st.resetProgressToCurrent);
   const openChapterPattern = useReader((st) => st.openChapterPattern);
+  const isAdmin = useAuth((st) => st.user?.username) === "lingwei";
+  // Which control last reported an outcome, and what it said.
+  const [notice, setNotice] = useState<{ id: string; text: string; bad?: boolean } | null>(null);
+  const [joining, setJoining] = useState(false);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const say = (id: string, text: string, bad = false) => setNotice({ id, text, bad });
+  const noticeFor = (id: string) =>
+    notice?.id === id ? (
+      <p className={`setting-note${notice.bad ? " is-bad" : ""}`} role="status">
+        {notice.text}
+      </p>
+    ) : null;
+
+  const joinLines = () => {
+    if (!novel) return;
+    setJoining(true);
+    api
+      .joinLines(novel.slug)
+      .then((r) => {
+        say(
+          "join",
+          r.joins === 0
+            ? "Nothing to join — every line already ends a sentence."
+            : `Joined ${r.joins} split ${r.joins === 1 ? "sentence" : "sentences"}. `
+              + `${r.chapters} chapters. Reopen the novel to see it.`,
+        );
+      })
+      .catch((e) => say("join", e?.message ?? "Could not edit the file", true))
+      .finally(() => setJoining(false));
+  };
   // Pinyin controls are meaningless for an English novel — hide them while one
   // is open. They stay visible everywhere else (and for Chinese novels).
   const showPinyin = novel?.language !== "en";
@@ -207,18 +247,43 @@ export function SettingsPanel() {
         <ConfirmButton
           label="Reset to defaults"
           confirmLabel="Reset settings"
-          onConfirm={() => reset()}
+          onConfirm={() => {
+            reset();
+            say("reset", "Settings restored to defaults.");
+          }}
         />
+        {noticeFor("reset")}
       </div>
 
       {novel && (
         <div className="setting setting-block">
           <label className="setting-label">Progress</label>
+          <button
+            className="btn-outline"
+            onClick={() => {
+              void resetProgress();
+              say("progress", "Progress set to where you are now.");
+            }}
+          >
+            Reset Progress To Current
+          </button>
+          {noticeFor("progress")}
+        </div>
+      )}
+
+      {/* Admin-only: rewrites the novel's .txt in the shared library. */}
+      {novel && view === "read" && isAdmin && novel.download_path && (
+        <div className="setting setting-block">
+          <label className="setting-label">
+            Source file
+            <span className="setting-value">admin</span>
+          </label>
           <ConfirmButton
-            label="Reset Progress To Current"
-            confirmLabel="Reset progress"
-            onConfirm={() => void resetProgress()}
+            label={joining ? "Joining…" : "Join Split Sentences"}
+            confirmLabel="Edit the .txt"
+            onConfirm={joinLines}
           />
+          {noticeFor("join")}
         </div>
       )}
 

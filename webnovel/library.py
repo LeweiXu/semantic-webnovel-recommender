@@ -383,6 +383,76 @@ def read_text_smart(path: Path) -> str:
     return decode_text(path.read_bytes())
 
 
+# Lines that must keep a line of their own when re-wrapping: chapter headings,
+# the generated preamble fields, and the storage divider rows.
+_PREAMBLE_PREFIXES = ("标题：", "作者：", "来源：", "简介", "分类", "状态", "标签")
+
+
+def _is_structural_line(stripped: str, heading_res: list[re.Pattern]) -> bool:
+    if not stripped:
+        return False
+    if "═" in stripped or stripped.startswith(_PREAMBLE_PREFIXES):
+        return True
+    return (
+        len(stripped) <= MAX_HEADING_LENGTH
+        and any(regex.search(stripped) for regex in heading_res)
+    )
+
+
+def _ends_mid_sentence(stripped: str) -> bool:
+    """True when a line stops on a Han character, i.e. with no closing mark.
+
+    Sources sometimes hard-wrap a sentence, leaving a line break in the middle
+    of it. A finished line ends in punctuation (。！？ a closing quote, …); one
+    that ends on a plain character was cut short.
+    """
+    return bool(stripped) and "一" <= stripped[-1] <= "鿿"
+
+
+def join_wrapped_lines(
+    text: str,
+    heading_pattern: str | None = None,
+    heading_patterns: list[str] | None = None,
+) -> tuple[str, int]:
+    """Repair sentences that a source split across lines. Returns (text, joins).
+
+    A line ending on a Han character is unfinished, so the next non-empty line
+    is pulled up onto it (repeatedly, until the sentence closes). Chapter
+    headings, preamble fields and divider rows are left strictly alone, in both
+    directions: they neither absorb the line below nor get absorbed by the line
+    above. Without that, every heading that ends on a character — most of them —
+    would swallow its first paragraph and stop being detectable as a heading.
+    """
+    patterns = [heading_pattern] if heading_pattern else (
+        heading_patterns if heading_patterns is not None else default_heading_patterns()
+    )
+    heading_res = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    joined: list[str] = []
+    joins = 0
+    index = 0
+    while index < len(lines):
+        joined.append(lines[index])
+        index += 1
+        current = joined[-1].strip()
+        if not current or _is_structural_line(current, heading_res):
+            continue
+        while _ends_mid_sentence(joined[-1].strip()):
+            look = index
+            while look < len(lines) and not lines[look].strip():
+                look += 1
+            if look >= len(lines):
+                break
+            following = lines[look].strip()
+            if _is_structural_line(following, heading_res):
+                break
+            joined[-1] = joined[-1].rstrip() + following
+            joins += 1
+            index = look + 1
+    return "\n".join(joined), joins
+
+
 def chapters_from_text(
     text: str,
     heading_pattern: str | None = None,

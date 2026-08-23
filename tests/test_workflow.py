@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 import zipfile
@@ -18,6 +19,7 @@ from scraper import parse_landing
 from webnovel.downloads import catalogue_urls
 from webnovel.library import (
     MAX_CHAPTER_CHARS,
+    join_wrapped_lines,
     Chapter,
     chapter_number,
     chapters_from_text,
@@ -237,6 +239,52 @@ Second body
         titles = [chapter.title for chapter in chapters]
         self.assertEqual(titles, ["第1章 One", "第2章 Two"])
         self.assertEqual(len(chapters[0].body), len(long_body))
+
+    def test_join_wrapped_lines_repairs_split_sentences(self) -> None:
+        # "这是第一句" stops on a character, so the source wrapped it mid-sentence.
+        text = (
+            "第一章 开端\n\n这是第一句\n被拆成了两行。\n\n"
+            "这一行以句号结束。\n\n第二章 继续\n\n短正文。\n"
+        )
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 1)
+        self.assertIn("这是第一句被拆成了两行。", joined)
+        # A line that already ends in punctuation is left exactly as it was.
+        self.assertIn("\n这一行以句号结束。\n", joined)
+        # Running it again is a no-op.
+        self.assertEqual(join_wrapped_lines(joined)[1], 0)
+
+    def test_join_wrapped_lines_never_touches_chapter_headings(self) -> None:
+        # Headings end on a character too. If they joined, each would swallow its
+        # first paragraph and stop being detectable, losing the whole structure.
+        text = (
+            "第一章 开端\n\n正文一。\n\n最后一句没有标点\n\n"
+            "第二章 继续\n\n正文二。\n"
+        )
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 0, joined)
+        self.assertEqual(
+            [c.title for c in chapters_from_text(joined)],
+            ["第一章 开端", "第二章 继续"],
+        )
+        # Both directions: the heading neither absorbs nor is absorbed, so each
+        # still stands alone on its own line.
+        lines = joined.split("\n")
+        self.assertIn("第一章 开端", lines)
+        self.assertIn("第二章 继续", lines)
+        self.assertIn("最后一句没有标点", lines)
+
+    def test_join_wrapped_lines_preserves_every_character(self) -> None:
+        text = (
+            "第一章 开端\n\n一句被拆开\n\n\n又拆一次\n继续到这里。\n\n"
+            "第二章 继续\n\n正文。\n"
+        )
+        joined, count = join_wrapped_lines(text)
+        self.assertEqual(count, 2)
+        strip_ws = lambda s: re.sub(r"\s+", "", s)
+        self.assertEqual(strip_ws(joined), strip_ws(text))
+        # Chapter count is unchanged by the repair.
+        self.assertEqual(len(chapters_from_text(joined)), len(chapters_from_text(text)))
 
     def test_saved_file_extracts_synopsis_after_preamble(self) -> None:
         text = """标题：Test

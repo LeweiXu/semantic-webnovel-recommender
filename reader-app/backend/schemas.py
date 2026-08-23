@@ -125,6 +125,13 @@ class ChapterContent(BaseModel):
     next: int | None = None
 
 
+class JoinLinesOut(BaseModel):
+    ok: bool
+    joins: int          # sentences rejoined
+    chapters: int       # chapter count after the rewrite (should be unchanged)
+    backup: str | None  # where the untouched original was kept, if one was made
+
+
 class ProgressIn(BaseModel):
     position: int
     line: int | None = None  # null page top; v2 stores a stable character offset

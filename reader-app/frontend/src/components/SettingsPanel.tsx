@@ -170,7 +170,7 @@ export function SettingsPanel() {
         <input
           type="range"
           min={16}
-          max={30}
+          max={50}
           step={1}
           value={s.fontSize}
           onChange={(e) => set({ fontSize: Number(e.target.value) })}
@@ -183,7 +183,7 @@ export function SettingsPanel() {
         </label>
         <input
           type="range"
-          min={1.0}
+          min={0.5}
           max={3.0}
           step={0.05}
           value={s.leading}
@@ -212,7 +212,7 @@ export function SettingsPanel() {
         <input
           type="range"
           min={28}
-          max={100}
+          max={120}
           step={1}
           value={s.measure}
           onChange={(e) => set({ measure: Number(e.target.value) })}

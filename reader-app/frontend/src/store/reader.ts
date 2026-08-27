@@ -22,6 +22,7 @@ interface ReaderState {
   current: number; // chapter under the reading line right now (drives the TOC)
   topChapter: number; // chapter at the very top of the page (for exact resume)
   topLine: number | null; // null page top; otherwise a stable character anchor
+  chapterPct: number; // 0-100 through the chapter being read (drives the spine)
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
   showSynopsis: boolean;
   chapterPatternOpen: boolean;
@@ -46,6 +47,7 @@ interface ReaderState {
   setFurthest: (idx: number) => void;
   setCurrent: (idx: number) => void;
   setTop: (chapter: number, line: number | null) => void;
+  setChapterPct: (pct: number) => void;
   setChromeVisible: (visible: boolean) => void;
   resetProgressToCurrent: () => Promise<void>;
   goToChapter: (idx: number) => void;
@@ -70,6 +72,7 @@ export const useReader = create<ReaderState>((set, get) => ({
   current: 0,
   topChapter: 0,
   topLine: null,
+  chapterPct: 0,
   jumpTarget: null,
   showSynopsis: false,
   chapterPatternOpen: false,
@@ -127,6 +130,7 @@ export const useReader = create<ReaderState>((set, get) => ({
         current: start,
         topChapter: start,
         topLine: startLine,
+        chapterPct: 0,
         showSynopsis: (
           location === undefined
           && start === 0
@@ -165,6 +169,9 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) =>
       s.topChapter === chapter && s.topLine === line ? {} : { topChapter: chapter, topLine: line },
     ),
+  // Whole integer percents only: the reader recomputes this on every scroll
+  // frame, and rounding keeps that from re-rendering the spine continuously.
+  setChapterPct: (pct) => set((s) => (s.chapterPct === pct ? {} : { chapterPct: pct })),
   setChromeVisible: (visible) =>
     set((s) => (s.chromeVisible === visible ? {} : { chromeVisible: visible })),
 
@@ -191,6 +198,7 @@ export const useReader = create<ReaderState>((set, get) => ({
         current: idx,
         topChapter: idx,
         topLine: null,
+        chapterPct: 0,
         tocOpen: false,
         leftOpen: false,
         chromeVisible: true,

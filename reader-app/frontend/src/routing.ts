@@ -6,6 +6,12 @@ export type AppRoute =
 
 export const ROUTE_EVENT = "reader:navigate";
 
+// The address bar counts chapters from 1; the app counts from 0.
+function readerChapter(value: string | null): number | null {
+  const shown = nonNegativeInt(value);
+  return shown === null ? null : Math.max(0, shown - 1);
+}
+
 function nonNegativeInt(value: string | null): number | null {
   if (value === null || value === "") return null;
   const parsed = Number(value);
@@ -33,7 +39,7 @@ export function currentRoute(): AppRoute {
     return {
       page: "reader",
       id: decodeSlug(readerMatch[1]),
-      chapter: nonNegativeInt(params.get("chapter")),
+      chapter: readerChapter(params.get("chapter")),
       line: nonNegativeInt(params.get("line")),
     };
   }
@@ -89,13 +95,51 @@ export function novelPath(id: string) {
 
 // The reader URL carries only the chapter. Intra-chapter line progress is kept
 // server-side (the reading bookmark), not exposed in the address bar.
+//
+// Chapters are 0-based everywhere inside the app but 1-based in the address bar,
+// so `?chapter=` matches the number the reader prints above the text. The
+// conversion lives here and in currentRoute() so nothing else has to think
+// about it.
 export function readerPath(id: string, chapter?: number | null) {
-  return withParams(`/reader/${encodeSlug(id)}`, { chapter });
+  const shown = chapter === null || chapter === undefined ? chapter : chapter + 1;
+  return withParams(`/reader/${encodeSlug(id)}`, { chapter: shown });
 }
 
 export function navigate(path: string, replace = false) {
   window.history[replace ? "replaceState" : "pushState"]({}, "", path);
   window.dispatchEvent(new Event(ROUTE_EVENT));
+}
+
+// Structural, so routing.ts stays framework-free: React's synthetic mouse event
+// satisfies this shape.
+interface PlainMouseEvent {
+  button: number;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  defaultPrevented: boolean;
+  preventDefault: () => void;
+}
+
+// Props for a navigation control that is a real link. Rendering an <a href>
+// means middle-click, ctrl/cmd-click and "open in new tab" behave as they do on
+// any other site; a plain left-click is still routed client-side, with no reload.
+export function linkProps(path: string): {
+  href: string;
+  onClick: (event: PlainMouseEvent) => void;
+} {
+  return {
+    href: path,
+    onClick: (event) => {
+      if (event.defaultPrevented) return;
+      // Let the browser handle anything that means "open this somewhere else".
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      navigate(path);
+    },
+  };
 }
 
 // State is already updated by the caller; change only the address bar. This is

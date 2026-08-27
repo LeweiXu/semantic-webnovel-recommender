@@ -206,6 +206,7 @@ export function ScrollReader() {
   const setCurrent = useReader((s) => s.setCurrent);
   const setFurthest = useReader((s) => s.setFurthest);
   const setTop = useReader((s) => s.setTop);
+  const setChapterPct = useReader((s) => s.setChapterPct);
   const setChromeVisible = useReader((s) => s.setChromeVisible);
   const chromeVisible = useReader((s) => s.chromeVisible);
   const topChapter = useReader((s) => s.topChapter);
@@ -360,6 +361,20 @@ export function ScrollReader() {
       }
       const curEl = sections.current.get(cur);
 
+      // How far through the current chapter we are, for the progress spine.
+      // Measured against the reading inset, and full once the chapter's end
+      // reaches the bottom of the screen (there is nothing left to scroll).
+      if (curEl) {
+        const rect = curEl.getBoundingClientRect();
+        const inset = chromeVisible ? READING_TOP_INSET : 0;
+        const travelled = inset - rect.top;
+        const scrollable = rect.height - (vh - inset);
+        const ratio = scrollable > 0
+          ? travelled / scrollable
+          : (travelled >= 0 ? 1 : 0); // chapter shorter than the screen
+        setChapterPct(Math.max(0, Math.min(100, Math.round(ratio * 100))));
+      }
+
       // Record the chapter + first character of the text line at the top. Unlike
       // a rendered line number, this anchor survives desktop/mobile reflow.
       let topC = loaded[0];
@@ -447,6 +462,7 @@ export function ScrollReader() {
     setCurrent,
     setFurthest,
     setTop,
+    setChapterPct,
   ]);
 
   const setRef = (idx: number) => (el: HTMLElement | null) => {

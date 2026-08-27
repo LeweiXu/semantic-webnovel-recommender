@@ -21,10 +21,10 @@ import {
   currentRoute,
   discoverPath,
   libraryPath,
-  navigate,
   novelPath,
   readerPath,
   writeUrl,
+  linkProps,
 } from "./routing";
 
 export default function App() {
@@ -40,6 +40,7 @@ export default function App() {
   const loading = useReader((s) => s.loading);
   const error = useReader((s) => s.error);
   const furthest = useReader((s) => s.furthest);
+  const chapterPct = useReader((s) => s.chapterPct);
   const view = useReader((s) => s.view);
   const setView = useReader((s) => s.setView);
   const rightOpen = useReader((s) => s.rightOpen);
@@ -96,7 +97,10 @@ export default function App() {
   }, [openNovel, setView]);
 
   const total = novel?.total ?? 0;
-  const spinePct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
+  // The header still reports where you are in the book; the spine tracks the
+  // chapter you're reading, which is the movement you actually feel.
+  const bookPct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
+  const spinePct = view === "read" ? chapterPct : 0;
   // The stripped-down header (Contents + Settings only) applies to the reader on
   // mobile/tablet. The novel page keeps the full header so there's a way out.
   const mobileReader = isMobile && view === "read";
@@ -114,20 +118,20 @@ export default function App() {
               else (and on desktop) show the full navigation. */}
           {!mobileReader && (
             <>
-              <button
+              <a
                 className={`icon-btn${view === "library" ? " is-active" : ""}`}
-                onClick={() => navigate(libraryPath())}
+                {...linkProps(libraryPath())}
                 aria-label="Library"
               >
                 <span className="seal-glyph small" aria-hidden>读</span>
-              </button>
-              <button
+              </a>
+              <a
                 className={`icon-btn${view === "discover" ? " is-active" : ""}`}
-                onClick={() => navigate(discoverPath())}
+                {...linkProps(discoverPath())}
                 aria-label="Discover"
               >
                 <CompassIcon />
-              </button>
+              </a>
             </>
           )}
           {novel && view === "read" && (
@@ -145,16 +149,16 @@ export default function App() {
             <>
               {/* Tapping the title opens the novel page — the exit route when the
                   mobile reader header hides the rest of the navigation. */}
-              <button
+              <a
                 className="topbar-title"
-                onClick={() => navigate(novelPath(novel.slug))}
+                {...linkProps(novelPath(novel.slug))}
                 aria-label="Novel page"
               >
                 {novel.title}
-              </button>
+              </a>
               {total > 0 && !mobileReader && (
                 <span className="topbar-sub">
-                  {Math.round(spinePct)}% · {furthest + 1}/{total}
+                  {Math.round(bookPct)}% · {furthest + 1}/{total}
                 </span>
               )}
             </>

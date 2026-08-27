@@ -138,6 +138,8 @@ button {
   font-family: var(--font-reading);
   font-size: 0.98rem;
   color: var(--ink);
+  text-decoration: none;
+  display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -165,6 +167,8 @@ button {
   border-radius: 50%;
   background: transparent;
   color: var(--ink-soft);
+  /* Some of these are real <a href> links so they can be opened in a new tab. */
+  text-decoration: none;
   transition: background 0.2s var(--ease), color 0.2s var(--ease);
 }
 .icon-btn:hover {

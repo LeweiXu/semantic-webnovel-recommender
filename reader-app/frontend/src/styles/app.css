@@ -473,9 +473,13 @@ button {
      which cancels out letter-spacing and makes the spacing slider a no-op. */
   text-align: left;
 }
-/* Pinyin ruby needs more vertical room so reading rows never collide. */
+/* Ruby sits inside the leading rather than adding to it. The annotation already
+   fills the space between rows, so matching the plain line-height reads as far
+   sparser with pinyin on — hence a step tighter than the chosen value, not the
+   +0.55 this used to add. Rows can't actually collide: the browser floors a ruby
+   line box at the annotation's own height (~1.45x here) whatever we ask for. */
 .chapter-body.has-pinyin p {
-  line-height: calc(var(--reading-leading) + 0.55);
+  line-height: calc(var(--reading-leading) - 0.3);
 }
 
 /* ── Ruby / words ────────────────────────────────────────────────────────── */

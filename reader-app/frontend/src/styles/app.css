@@ -1143,7 +1143,25 @@ rt.rt-hidden {
   background: var(--seal-soft);
 }
 .bookmark-delete:disabled { cursor: default; opacity: 0.5; }
-.bookmark-hint { font-size: 0.72rem; }
+
+/* The reading position: kept by the app, not the reader, so it is pinned to the
+   top of the list, marked, and has no delete control. */
+.bookmark-jump.is-progress {
+  background: var(--seal-soft);
+}
+.bookmark-jump.is-progress .toc-ord { color: var(--accent); }
+.bookmark-jump.is-progress .toc-title { color: var(--ink); }
+.bookmark-badge {
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+/* Nothing sits in the delete column for it, so keep the text lined up with the
+   hand-saved rows below. */
+.bookmark-row.is-progress-row { padding-right: 32px; }
 
 /* ── Download row ────────────────────────────────────────────────────────── */
 .download {

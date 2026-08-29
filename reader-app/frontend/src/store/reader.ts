@@ -24,6 +24,10 @@ interface ReaderState {
   current: number; // chapter under the reading line right now (drives the TOC)
   topChapter: number; // chapter at the very top of the page (for exact resume)
   topLine: number | null; // null page top; otherwise a stable character anchor
+  // The account's automatic "where I left off" bookmark. Mirrors the server's
+  // rule: it only ever moves forward, so re-reading an earlier chapter (or a
+  // jump back) doesn't drag it backwards.
+  progress: { chapter: number; line: number | null };
   chapterPct: number; // 0-100 through the chapter being read (drives the spine)
   jumpTarget: number | null; // a TOC pick the reader should jump to, then clear
   jumpLine: number | null; // where inside jumpTarget to land; null = its top
@@ -83,6 +87,7 @@ export const useReader = create<ReaderState>((set, get) => ({
   current: 0,
   topChapter: 0,
   topLine: null,
+  progress: { chapter: 0, line: null },
   chapterPct: 0,
   jumpTarget: null,
   jumpLine: null,
@@ -147,6 +152,7 @@ export const useReader = create<ReaderState>((set, get) => ({
         current: start,
         topChapter: start,
         topLine: startLine,
+        progress: { chapter: novel.position ?? 0, line: novel.line },
         chapterPct: 0,
         showSynopsis: (
           location === undefined
@@ -184,9 +190,17 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) => (idx > s.furthest ? { furthest: idx } : {})),
   setCurrent: (idx) => set((s) => (idx === s.current ? {} : { current: idx })),
   setTop: (chapter, line) =>
-    set((s) =>
-      s.topChapter === chapter && s.topLine === line ? {} : { topChapter: chapter, topLine: line },
-    ),
+    set((s) => {
+      const moved = s.topChapter !== chapter || s.topLine !== line;
+      const ahead =
+        chapter > s.progress.chapter
+        || (chapter === s.progress.chapter && (line ?? -1) > (s.progress.line ?? -1));
+      if (!moved && !ahead) return {};
+      return {
+        ...(moved ? { topChapter: chapter, topLine: line } : {}),
+        ...(ahead ? { progress: { chapter, line } } : {}),
+      };
+    }),
   // Whole integer percents only: the reader recomputes this on every scroll
   // frame, and rounding keeps that from re-rendering the spine continuously.
   setChapterPct: (pct) => set((s) => (s.chapterPct === pct ? {} : { chapterPct: pct })),
@@ -198,7 +212,11 @@ export const useReader = create<ReaderState>((set, get) => ({
   resetProgressToCurrent: async () => {
     const { novel, topChapter, topLine } = get();
     if (!novel) return;
-    set({ furthest: topChapter, current: topChapter });
+    set({
+      furthest: topChapter,
+      current: topChapter,
+      progress: { chapter: topChapter, line: topLine },
+    });
     try {
       await api.setProgress(novel.slug, topChapter, topLine, true);
     } catch {
@@ -275,7 +293,16 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) => ({ leftOpen: open ?? !s.leftOpen, tocOpen: false })),
   toggleRight: (open) => set((s) => ({ rightOpen: open ?? !s.rightOpen })),
   toggleToc: (open) =>
-    set((s) => ({ tocOpen: open ?? !s.tocOpen, leftOpen: false })),
+    set((s) => {
+      const next = open ?? !s.tocOpen;
+      // Opening always lands on the table of contents, whichever tab was left
+      // showing last time — the button that opens this is "Contents".
+      return {
+        tocOpen: next,
+        leftOpen: false,
+        ...(next ? { tocTab: "contents" as const } : {}),
+      };
+    }),
   closeNovel: () => {
     openSequence += 1;
     set({

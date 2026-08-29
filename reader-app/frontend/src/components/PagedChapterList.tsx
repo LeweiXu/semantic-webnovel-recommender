@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChapterStub } from "../api/client";
 import { formatCount } from "../format";
 
@@ -11,6 +11,10 @@ interface Props {
   // Chapter lengths, set against the right edge of each row. Off by default:
   // the drawer is too narrow for a third column.
   showWords?: boolean;
+  // While true, the list keeps the current chapter paged in and scrolled into
+  // view. Pass the drawer's open state: each time it opens, the list returns to
+  // wherever the reader is, undoing any manual paging from last time.
+  revealCurrent?: boolean;
   onSelect: (chapter: number) => void;
 }
 
@@ -19,6 +23,7 @@ export function PagedChapterList({
   current = -1,
   className = "",
   showWords = false,
+  revealCurrent = false,
   onSelect,
 }: Props) {
   const pages = Math.max(1, Math.ceil(chapters.length / PAGE_SIZE));
@@ -28,15 +33,24 @@ export function PagedChapterList({
 
   useEffect(() => {
     if (current >= 0) setPage(Math.floor(current / PAGE_SIZE));
-  }, [current]);
+  }, [current, revealCurrent]);
 
   const safePage = Math.min(page, pages - 1);
   const start = safePage * PAGE_SIZE;
   const visible = chapters.slice(start, start + PAGE_SIZE);
 
+  // Runs after the page above settles, so the active row is really rendered.
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (!revealCurrent || current < 0) return;
+    list.current
+      ?.querySelector<HTMLElement>(".toc-row.is-active")
+      ?.scrollIntoView({ block: "center" });
+  }, [revealCurrent, current, safePage]);
+
   return (
     <>
-      <ul className={`toc-list${className ? ` ${className}` : ""}`}>
+      <ul ref={list} className={`toc-list${className ? ` ${className}` : ""}`}>
         {visible.map((chapter) => (
           <li key={chapter.index}>
             <button

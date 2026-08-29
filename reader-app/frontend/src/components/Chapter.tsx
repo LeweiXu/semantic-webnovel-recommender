@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import type { ChapterContent, Token } from "../api/client";
 import { RubyText } from "./RubyText";
+import { formatWords } from "../format";
 
 interface Props {
   content: ChapterContent;
@@ -32,6 +33,20 @@ export function splitParagraphs(tokens: Token[]): Token[][] {
   return paras;
 }
 
+// The character offsets a bookmark stores are into the paragraphs-joined-by-one-
+// newline text that `positioned` below lays out, so rebuild exactly that string
+// and cut from the anchor. Keep this beside `positioned`: they have to agree.
+export function chapterExcerpt(
+  tokens: Token[],
+  anchor: number | null,
+  length = 60,
+): string {
+  const text = splitParagraphs(tokens)
+    .map((paragraph) => paragraph.map((token) => token.t).join(""))
+    .join("\n");
+  return text.slice(Math.max(0, anchor ?? 0), Math.max(0, anchor ?? 0) + length).trim();
+}
+
 function ChapterImpl({ content, pinyin, onWord }: Props) {
   const paragraphs = useMemo(() => splitParagraphs(content.tokens), [content.tokens]);
   const rich = useMemo(
@@ -57,6 +72,9 @@ function ChapterImpl({ content, pinyin, onWord }: Props) {
       <header className="chapter-head">
         <span className="chapter-ord">{String(content.index + 1).padStart(2, "0")}</span>
         <h2 className="chapter-title">{content.title}</h2>
+        {content.words > 0 && (
+          <span className="chapter-words">{formatWords(content.words)}</span>
+        )}
       </header>
       <div className={`chapter-body${pinyin ? " has-pinyin" : ""}`}>
         {positioned.map((paragraph, pi) => (

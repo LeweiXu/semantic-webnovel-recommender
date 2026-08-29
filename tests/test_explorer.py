@@ -379,3 +379,157 @@ class JoinLinesEndpointTests(unittest.TestCase):
                 response = client.post("/api/novel/novel.txt/join-lines")
                 novels._chapter_cache.clear()
         self.assertIn(response.status_code, (401, 403))
+
+
+class UserBookmarkTests(unittest.TestCase):
+    """The per-user store behind the reader's Bookmarks view."""
+
+    def test_bookmarks_are_per_novel_newest_first_and_deletable(self) -> None:
+        import user_bookmarks
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_bookmarks, "BOOKMARK_DIR", Path(directory)
+        ):
+            user_bookmarks.add("alice", "novel", chapter=1, line=10, excerpt="one")
+            rows = user_bookmarks.add("alice", "novel", chapter=4, line=None, excerpt="two")
+            self.assertEqual([row["chapter"] for row in rows], [4, 1])
+            self.assertIsNone(rows[0]["line"])
+
+            # A second novel keeps its own list.
+            user_bookmarks.add("alice", "other", chapter=0, line=0)
+            self.assertEqual(len(user_bookmarks.list_for("alice", "novel")), 2)
+            self.assertEqual(len(user_bookmarks.list_for("alice", "other")), 1)
+
+            left = user_bookmarks.remove("alice", "novel", rows[0]["id"])
+            self.assertEqual([row["chapter"] for row in left], [1])
+            # Deleting something already gone is a no-op, not an error.
+            self.assertEqual(len(user_bookmarks.remove("alice", "novel", "nope")), 1)
+
+    def test_the_same_position_is_never_saved_twice(self) -> None:
+        import user_bookmarks
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_bookmarks, "BOOKMARK_DIR", Path(directory)
+        ):
+            user_bookmarks.add("alice", "novel", chapter=2, line=44)
+            rows = user_bookmarks.add("alice", "novel", chapter=2, line=44)
+            self.assertEqual(len(rows), 1)
+            # The top of a chapter and a position inside it are different places.
+            rows = user_bookmarks.add("alice", "novel", chapter=2, line=None)
+            self.assertEqual(len(rows), 2)
+
+    def test_excerpt_is_collapsed_and_capped(self) -> None:
+        import user_bookmarks
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_bookmarks, "BOOKMARK_DIR", Path(directory)
+        ):
+            rows = user_bookmarks.add(
+                "alice", "novel", chapter=0, excerpt=" a\n b " + "x" * 400
+            )
+            self.assertEqual(len(rows[0]["excerpt"]), user_bookmarks.MAX_EXCERPT)
+            self.assertTrue(rows[0]["excerpt"].startswith("a b"))
+
+    def test_users_are_isolated(self) -> None:
+        import user_bookmarks
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_bookmarks, "BOOKMARK_DIR", Path(directory)
+        ):
+            user_bookmarks.add("alice", "novel", chapter=1)
+            self.assertEqual(user_bookmarks.list_for("bob", "novel"), [])
+
+
+class ReaderApiTests(unittest.TestCase):
+    """Word counts and bookmarks over the HTTP API, on a raw browsed .txt."""
+
+    TEXT = "第一章 开端\n\n上来就两句话。\n\n第二章 继续\n\n下一章短一点。\n"
+
+    def _client(self, root: Path, bookmark_dir: Path):
+        from fastapi.testclient import TestClient
+        import app as backend_app
+        import user_bookmarks
+        from auth import current_user
+
+        (root / "novel.txt").write_text(self.TEXT, encoding="utf-8")
+        backend_app.app.dependency_overrides[current_user] = lambda: "alice"
+        patches = [
+            patch.object(browse, "BROWSE_DIR", root),
+            patch.object(user_bookmarks, "BOOKMARK_DIR", bookmark_dir),
+        ]
+        for item in patches:
+            item.start()
+        novels._chapter_cache.clear()
+        return TestClient(backend_app.app), patches
+
+    def _teardown(self, patches) -> None:
+        import app as backend_app
+
+        for item in patches:
+            item.stop()
+        backend_app.app.dependency_overrides.clear()
+        novels._chapter_cache.clear()
+
+    def test_word_counts_are_reported_per_chapter_and_for_the_book(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as marks:
+            client, patches = self._client(Path(directory), Path(marks))
+            try:
+                detail = client.get("/api/novel/novel.txt").json()
+                chapter = client.get("/api/novel/novel.txt/chapter/0?annotate=0").json()
+            finally:
+                self._teardown(patches)
+
+        words = [c["words"] for c in detail["chapters"]]
+        self.assertEqual(words, [len("上来就两句话。"), len("下一章短一点。")])
+        self.assertEqual(detail["total_words"], sum(words))
+        # The chapter payload carries the same count the contents list shows.
+        self.assertEqual(chapter["words"], words[0])
+
+    def test_bookmarks_round_trip_through_the_api(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as marks:
+            client, patches = self._client(Path(directory), Path(marks))
+            try:
+                self.assertEqual(client.get("/api/novel/novel.txt/bookmarks").json(), [])
+                rows = client.post(
+                    "/api/novel/novel.txt/bookmarks",
+                    json={"chapter": 1, "line": 3, "chapter_title": "wrong", "excerpt": "下一章"},
+                ).json()
+                self.assertEqual(len(rows), 1)
+                # The heading comes from the book, not from what the client sent.
+                self.assertEqual(rows[0]["chapter_title"], "第二章 继续")
+                self.assertEqual(rows[0]["line"], 3)
+
+                listed = client.get("/api/novel/novel.txt/bookmarks").json()
+                self.assertEqual(listed, rows)
+
+                left = client.delete(
+                    f"/api/novel/novel.txt/bookmarks/{rows[0]['id']}"
+                ).json()
+                self.assertEqual(left, [])
+            finally:
+                self._teardown(patches)
+
+    def test_a_bookmark_past_the_last_chapter_is_clamped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as marks:
+            client, patches = self._client(Path(directory), Path(marks))
+            try:
+                rows = client.post(
+                    "/api/novel/novel.txt/bookmarks", json={"chapter": 99, "line": None}
+                ).json()
+            finally:
+                self._teardown(patches)
+        self.assertEqual(rows[0]["chapter"], 1)
+
+    def test_bookmarks_require_a_login(self) -> None:
+        from fastapi.testclient import TestClient
+        import app as backend_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "novel.txt").write_text(self.TEXT, encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root):
+                novels._chapter_cache.clear()
+                client = TestClient(backend_app.app)
+                response = client.get("/api/novel/novel.txt/bookmarks")
+                novels._chapter_cache.clear()
+        self.assertEqual(response.status_code, 401)

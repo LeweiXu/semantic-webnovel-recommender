@@ -18,7 +18,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from webnovel.library import join_wrapped_lines, list_library, local_path, read_text_smart
+from webnovel.library import (
+    count_words, join_wrapped_lines, list_library, local_path, read_text_smart,
+)
 
 import admin_jobs
 import annotate
@@ -30,15 +32,16 @@ import download_manager
 import novels
 import recommend_api
 import upload_api
+import user_bookmarks
 import user_library
 import user_progress
 import user_settings
 from auth import current_user, optional_user, require_admin
 from ids import nid_decode, nid_encode
 from schemas import (
-    BrowseListing, ChapterPatternIn, ChapterPatternOut, ChapterPatternPreviewIn,
-    ChapterStub, DefineOut, JoinLinesOut, NovelDetail, ProgressIn, ProgressOut, ReadingItem,
-    SearchItem, ShelfItem,
+    BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
+    ChapterPatternPreviewIn, ChapterStub, DefineOut, JoinLinesOut, NovelDetail,
+    ProgressIn, ProgressOut, ReadingItem, SearchItem, ShelfItem,
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
@@ -417,6 +420,7 @@ def chapter(nid: str, idx: int, annotate_flag: int = Query(default=1, alias="ann
         "index": idx,
         "title": ch.title,
         "total": total,
+        "words": count_words(ch.body, resolved.language),
         "tokens": tokens,
         "prev": idx - 1 if idx > 0 else None,
         "next": idx + 1 if idx + 1 < total else None,
@@ -574,6 +578,44 @@ def set_progress(
     )
 
 
+# ── Manual bookmarks (any number per novel, separate from reading progress) ──
+
+@app.get("/api/novel/{nid:path}/bookmarks", response_model=list[BookmarkOut])
+def list_bookmarks(nid: str, username: str = Depends(current_user)) -> list[BookmarkOut]:
+    resolved = _resolve_or_404(nid)
+    return [BookmarkOut(**row) for row in user_bookmarks.list_for(username, resolved.url)]
+
+
+@app.post("/api/novel/{nid:path}/bookmarks", response_model=list[BookmarkOut])
+def add_bookmark(
+    nid: str, body: BookmarkIn, username: str = Depends(current_user)
+) -> list[BookmarkOut]:
+    resolved = _resolve_or_404(nid)
+    total = len(resolved.chapters)
+    chapter = max(0, min(body.chapter, max(total - 1, 0)))
+    # Prefer the real heading over whatever the client sent, so a bookmark can't
+    # be labelled with a title the book doesn't have.
+    chapter_title = resolved.chapters[chapter].title if chapter < total else ""
+    rows = user_bookmarks.add(
+        username, resolved.url,
+        chapter=chapter,
+        line=body.line,
+        chapter_title=chapter_title,
+        excerpt=body.excerpt,
+        title=resolved.title,
+    )
+    return [BookmarkOut(**row) for row in rows]
+
+
+@app.delete("/api/novel/{nid:path}/bookmarks/{bookmark_id}", response_model=list[BookmarkOut])
+def delete_bookmark(
+    nid: str, bookmark_id: str, username: str = Depends(current_user)
+) -> list[BookmarkOut]:
+    resolved = _resolve_or_404(nid)
+    rows = user_bookmarks.remove(username, resolved.url, bookmark_id)
+    return [BookmarkOut(**row) for row in rows]
+
+
 @app.post("/api/novel/{nid:path}/join-lines", response_model=JoinLinesOut)
 def join_lines(nid: str, _username: str = Depends(require_admin)) -> JoinLinesOut:
     """Rejoin sentences the source hard-wrapped, editing the .txt in place.
@@ -636,6 +678,7 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         if resolved.synopsis and resolved.language != "en"
         else []
     )
+    chapter_words = [count_words(c.body, resolved.language) for c in resolved.chapters]
     return NovelDetail(
         url=resolved.url,
         nid=nid_encode(resolved.url),
@@ -648,11 +691,12 @@ def novel_detail(nid: str, username: str | None = Depends(optional_user)) -> Nov
         synopsis_tokens=synopsis_tokens,
         downloaded=True,
         total=total,
+        total_words=sum(chapter_words),
         position=position,
         line=line,
         anchor_version=int(entry.get("anchor_version", 1 if line is not None else 2)),
         chapters=[
-            ChapterStub(index=i, title=c.title)
+            ChapterStub(index=i, title=c.title, words=chapter_words[i])
             for i, c in enumerate(resolved.chapters)
         ],
         kind=resolved.kind,

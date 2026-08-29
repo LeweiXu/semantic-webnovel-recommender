@@ -19,6 +19,7 @@ from scraper import parse_landing
 from webnovel.downloads import catalogue_urls
 from webnovel.library import (
     MAX_CHAPTER_CHARS,
+    count_words,
     join_wrapped_lines,
     Chapter,
     chapter_number,
@@ -239,6 +240,16 @@ Second body
         titles = [chapter.title for chapter in chapters]
         self.assertEqual(titles, ["第1章 One", "第2章 Two"])
         self.assertEqual(len(chapters[0].body), len(long_body))
+
+    def test_word_count_uses_the_unit_the_language_is_counted_in(self) -> None:
+        # Chinese has no spaces, so 字数 counts every non-whitespace character,
+        # punctuation included, and the wrapping of the source cannot change it.
+        self.assertEqual(count_words("你好，世界。"), 6)
+        self.assertEqual(count_words("你好，\n世界。 "), 6)
+        # English is counted in whitespace-delimited words instead.
+        self.assertEqual(count_words("one two  three\nfour", "en"), 4)
+        self.assertEqual(count_words("", "en"), 0)
+        self.assertEqual(count_words("   \n  "), 0)
 
     def test_join_wrapped_lines_repairs_split_sentences(self) -> None:
         # "这是第一句" stops on a character, so the source wrapped it mid-sentence.

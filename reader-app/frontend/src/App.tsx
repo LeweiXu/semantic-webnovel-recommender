@@ -48,6 +48,10 @@ export default function App() {
   const toggleRight = useReader((s) => s.toggleRight);
   const toggleToc = useReader((s) => s.toggleToc);
   const openNovel = useReader((s) => s.openNovel);
+  const bookmarks = useReader((s) => s.bookmarks);
+  const addBookmark = useReader((s) => s.addBookmark);
+  const setTocTab = useReader((s) => s.setTocTab);
+  const topChapter = useReader((s) => s.topChapter);
   const chromeVisible = useReader((s) => s.chromeVisible);
   const chapterPatternOpen = useReader((s) => s.chapterPatternOpen);
   const closeChapterPattern = useReader((s) => s.closeChapterPattern);
@@ -141,6 +145,23 @@ export default function App() {
               aria-label="Contents"
             >
               <ContentsIcon />
+            </button>
+          )}
+          {/* One tap saves the place on screen. The flag fills once this chapter
+              has a bookmark, so the tap has visible feedback; the drawer's
+              Bookmarks view is where they're reviewed and deleted. */}
+          {novel && view === "read" && user && (
+            <button
+              className="icon-btn"
+              onClick={() => {
+                void addBookmark().catch(() => undefined);
+                setTocTab("bookmarks");
+              }}
+              aria-label="Bookmark this page"
+            >
+              <BookmarkIcon
+                filled={bookmarks.some((b) => b.chapter === topChapter)}
+              />
             </button>
           )}
         </div>
@@ -261,6 +282,21 @@ function ContentsIcon() {
         stroke="currentColor"
         strokeWidth="1.6"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function BookmarkIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        fill={filled ? "currentColor" : "none"}
+        fillOpacity={filled ? 0.28 : 0}
       />
     </svg>
   );

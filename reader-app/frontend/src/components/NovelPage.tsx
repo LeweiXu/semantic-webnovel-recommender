@@ -3,6 +3,7 @@ import { api, type NovelDetail } from "../api/client";
 import { useReader } from "../store/reader";
 import { currentRoute } from "../routing";
 import { PagedChapterList } from "./PagedChapterList";
+import { formatCount } from "../format";
 
 const CAT_LABEL: Record<string, string> = { gl: "百合", yanqing: "言情" };
 const catLabel = (c: string) => CAT_LABEL[c] ?? c;
@@ -44,6 +45,7 @@ export function NovelPage() {
   const resumeLabel = novel.position > 0 ? `Continue · ch ${novel.position + 1}` : "Start reading";
   const downloadName = `${novel.download_path?.split("/").pop() ?? `${novel.title}.txt`}`;
   const long = novel.synopsis.length > SYNOPSIS_CAP;
+  const avgWords = novel.total > 0 ? Math.round(novel.total_words / novel.total) : 0;
   const synopsisText = long && !synopsisOpen
     ? `${novel.synopsis.slice(0, SYNOPSIS_CAP)}…`
     : novel.synopsis;
@@ -57,6 +59,8 @@ export function NovelPage() {
             {novel.author || "—"}
             {novel.category ? ` · ${catLabel(novel.category)}` : ""}
             {novel.total ? ` · ${novel.total} chapters` : ""}
+            {novel.total_words ? ` · ${formatCount(novel.total_words)} words` : ""}
+            {avgWords ? ` · ${formatCount(avgWords)} per chapter` : ""}
           </p>
           {novel.tags.length > 0 && (
             <div className="novel-page-tags">
@@ -112,6 +116,7 @@ export function NovelPage() {
             chapters={novel.chapters}
             current={novel.position}
             className="novel-page-toc"
+            showWords
             onSelect={(chapter) => openNovel(novel.slug, { chapter, line: null })}
           />
         </section>

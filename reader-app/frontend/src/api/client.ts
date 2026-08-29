@@ -74,6 +74,16 @@ export interface SearchItem {
 export interface ChapterStub {
   index: number;
   title: string;
+  words: number;
+}
+
+export interface Bookmark {
+  id: string;
+  chapter: number;
+  chapter_title: string;
+  line: number | null; // null = the top of the chapter
+  excerpt: string;
+  created: string;
 }
 
 export interface NovelDetail {
@@ -88,6 +98,7 @@ export interface NovelDetail {
   synopsis_tokens: Token[];
   downloaded: boolean;
   total: number;
+  total_words: number;
   position: number;
   line: number | null;
   anchor_version: number;
@@ -169,6 +180,7 @@ export interface ChapterContent {
   index: number;
   title: string;
   total: number;
+  words: number;
   tokens: Token[];
   prev: number | null;
   next: number | null;
@@ -377,6 +389,15 @@ export const api = {
   chapter: (nid: string, idx: number, annotate: boolean) =>
     getJSON<ChapterContent>(
       `/api/novel/${encodeId(nid)}/chapter/${idx}?annotate=${annotate ? 1 : 0}`,
+    ),
+  bookmarks: (nid: string) => getJSON<Bookmark[]>(`/api/novel/${encodeId(nid)}/bookmarks`),
+  addBookmark: (
+    nid: string,
+    body: { chapter: number; line: number | null; chapter_title: string; excerpt: string },
+  ) => postJSON<Bookmark[]>(`/api/novel/${encodeId(nid)}/bookmarks`, body),
+  deleteBookmark: (nid: string, id: string) =>
+    deleteJSON<Bookmark[]>(
+      `/api/novel/${encodeId(nid)}/bookmarks/${encodeURIComponent(id)}`,
     ),
   previewChapterPattern: (nid: string, sample: string, pattern = "") =>
     postJSON<ChapterPatternResult>(

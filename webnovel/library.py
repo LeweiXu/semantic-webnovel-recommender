@@ -24,6 +24,18 @@ class Chapter:
         return f"{self.title}\n\n{self.body}".strip()
 
 
+def count_words(text: str, language: str = "zh") -> int:
+    """Length of a passage in the unit its language is normally counted in.
+
+    Chinese has no spaces, so the convention (and what a 52shuku page prints) is
+    字数: every non-whitespace character, punctuation included. English is
+    counted in whitespace-delimited words instead.
+    """
+    if language == "en":
+        return len(text.split())
+    return len("".join(text.split()))
+
+
 FALLBACK_BLOCK_CHARS = 2_000
 MAX_HEADING_LENGTH = 100
 # Block size used when cutting up a chapter the *numbering* proved is really

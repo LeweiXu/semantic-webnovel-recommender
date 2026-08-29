@@ -461,6 +461,17 @@ button {
   margin: 0;
   color: var(--ink);
 }
+/* Chapter length, set apart at the end of the heading rule. */
+.chapter-words {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 .chapter-body p {
   font-family: var(--font-reading);
@@ -1021,6 +1032,118 @@ rt.rt-hidden {
 .toc-row.is-active .toc-title {
   color: var(--ink);
 }
+/* Chapter length, pinned to the right edge of the row. */
+.toc-words {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Contents / Bookmarks tabs ───────────────────────────────────────────── */
+.toc-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.toc-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 4px 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.toc-tab:hover { color: var(--ink-soft); }
+.toc-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.toc-tab-count {
+  margin-left: 6px;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.toc-empty {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--muted);
+  margin: 14px 2px;
+}
+
+/* ── Bookmarks ───────────────────────────────────────────────────────────── */
+.bookmark-add {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.bookmark-list { gap: 2px; }
+.bookmark-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.bookmark-jump {
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+}
+.bookmark-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.bookmark-excerpt {
+  font-family: var(--font-reading);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--muted);
+  /* Two lines is enough to place the passage without turning the drawer into
+     a wall of text. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bookmark-date {
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bookmark-delete {
+  flex: 0 0 auto;
+  width: 30px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.bookmark-delete:hover {
+  color: var(--accent);
+  background: var(--seal-soft);
+}
+.bookmark-delete:disabled { cursor: default; opacity: 0.5; }
+.bookmark-hint { font-size: 0.72rem; }
 
 /* ── Download row ────────────────────────────────────────────────────────── */
 .download {

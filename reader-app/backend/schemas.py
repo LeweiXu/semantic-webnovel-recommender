@@ -84,6 +84,7 @@ class BrowseListing(BaseModel):
 class ChapterStub(BaseModel):
     index: int
     title: str
+    words: int = 0
 
 
 class Token(BaseModel):
@@ -103,6 +104,7 @@ class NovelDetail(BaseModel):
     synopsis_tokens: list[Token] = []
     downloaded: bool = True
     total: int
+    total_words: int = 0
     position: int = 0
     line: int | None = None
     anchor_version: int = 2
@@ -120,6 +122,7 @@ class ChapterContent(BaseModel):
     index: int
     title: str
     total: int
+    words: int = 0
     tokens: list[Token]
     prev: int | None = None
     next: int | None = None
@@ -146,6 +149,22 @@ class ProgressOut(BaseModel):
     line: int | None = None
     anchor_version: int = 2
     updated: str
+
+
+class BookmarkIn(BaseModel):
+    chapter: int
+    line: int | None = None  # null = the top of the chapter
+    chapter_title: str = ""
+    excerpt: str = ""  # a few words of the bookmarked line, to recognise it by
+
+
+class BookmarkOut(BaseModel):
+    id: str
+    chapter: int
+    chapter_title: str = ""
+    line: int | None = None
+    excerpt: str = ""
+    created: str = ""
 
 
 class ChapterPatternPreviewIn(BaseModel):

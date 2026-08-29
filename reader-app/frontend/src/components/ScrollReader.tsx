@@ -212,6 +212,7 @@ export function ScrollReader() {
   const topChapter = useReader((s) => s.topChapter);
   const topLine = useReader((s) => s.topLine);
   const jumpTarget = useReader((s) => s.jumpTarget);
+  const jumpLine = useReader((s) => s.jumpLine);
   const clearJump = useReader((s) => s.clearJump);
   const showSynopsis = useReader((s) => s.showSynopsis);
   const goToChapter = useReader((s) => s.goToChapter);
@@ -284,14 +285,16 @@ export function ScrollReader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A table-of-contents pick: land on that chapter's top and advance the spine
-  // if it's ahead of where we are.
+  // A table-of-contents pick, or a saved bookmark: land there and advance the
+  // spine if it's ahead of where we are. A chapter pick carries a null line and
+  // lands on the chapter top; a bookmark carries its own text anchor.
   useEffect(() => {
     if (jumpTarget === null) return;
     const idx = jumpTarget;
+    const line = jumpLine;
     clearJump();
     setFurthest(idx);
-    landOn(idx);
+    landOn(idx, { line });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpTarget]);
 

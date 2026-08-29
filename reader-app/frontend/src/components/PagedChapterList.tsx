@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ChapterStub } from "../api/client";
+import { formatCount } from "../format";
 
 const PAGE_SIZE = 120;
 
@@ -7,6 +8,9 @@ interface Props {
   chapters: ChapterStub[];
   current?: number;
   className?: string;
+  // Chapter lengths, set against the right edge of each row. Off by default:
+  // the drawer is too narrow for a third column.
+  showWords?: boolean;
   onSelect: (chapter: number) => void;
 }
 
@@ -14,6 +18,7 @@ export function PagedChapterList({
   chapters,
   current = -1,
   className = "",
+  showWords = false,
   onSelect,
 }: Props) {
   const pages = Math.max(1, Math.ceil(chapters.length / PAGE_SIZE));
@@ -40,6 +45,9 @@ export function PagedChapterList({
             >
               <span className="toc-ord">{String(chapter.index + 1).padStart(2, "0")}</span>
               <span className="toc-title">{chapter.title}</span>
+              {showWords && chapter.words > 0 && (
+                <span className="toc-words">{formatCount(chapter.words)}</span>
+              )}
             </button>
           </li>
         ))}

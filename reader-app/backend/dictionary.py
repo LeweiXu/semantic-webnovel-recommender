@@ -29,11 +29,13 @@ _index: dict[str, list[dict]] | None = None
 
 
 def _toned_syllable(syl: str) -> str:
-    match = re.match(r"^([a-zü]+)([1-5])$", syl, re.IGNORECASE)
+    # CC-CEDICT spells ü as "u:" (nu:3 = nǚ), so the colon has to be allowed
+    # through the match or the syllable comes out raw, tone digit and all.
+    match = re.match(r"^([a-zü:]+)([1-5])$", syl, re.IGNORECASE)
     if not match:
         return syl
     base, tone = match.group(1), int(match.group(2))
-    base = base.replace("u:", "ü").replace("v", "ü")
+    base = base.replace("u:", "ü").replace("U:", "ü").replace("v", "ü")
     if tone == 5:
         return base
     # Tone placement: a/e take it; "ou" -> o; otherwise the last vowel.

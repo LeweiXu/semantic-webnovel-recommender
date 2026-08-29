@@ -533,3 +533,85 @@ class ReaderApiTests(unittest.TestCase):
                 response = client.get("/api/novel/novel.txt/bookmarks")
                 novels._chapter_cache.clear()
         self.assertEqual(response.status_code, 401)
+
+
+class AnnotationTests(unittest.TestCase):
+    """Segmentation and pinyin: jieba's cut reconciled against CC-CEDICT."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import annotate
+
+        cls.annotate = annotate
+
+    def test_text_survives_tokenizing_exactly(self) -> None:
+        # The reader derives character offsets (bookmarks, resume) from the token
+        # stream, so the surfaces must rejoin into the input character for
+        # character. Nothing may be dropped, reordered or inserted.
+        for text in (
+            "他在子时醒来。\n\n第二天，沈谌安说：“走吧。”\n",
+            "Chapter 3 —— 混合 ASCII 与 123 数字\n",
+            "",
+        ):
+            with self.subTest(text=text[:16]):
+                tokens = self.annotate.tokenize(text)
+                self.assertEqual("".join(t["t"] for t in tokens), text)
+
+    def test_a_dictionary_word_survives_a_context_that_split_it(self) -> None:
+        # jieba keeps 子时 together alone but cuts it into 子 + 时 in a sentence.
+        # The dictionary settles it, so the grouping no longer depends on context.
+        for text in ("子时", "他在子时醒来"):
+            with self.subTest(text=text):
+                tokens = self.annotate.tokenize(text)
+                self.assertIn("子时", [t["t"] for t in tokens])
+        reading = next(
+            t["py"] for t in self.annotate.tokenize("他在子时醒来") if t["t"] == "子时"
+        )
+        self.assertEqual(reading, "zǐ shí")
+
+    def test_every_multi_character_group_is_a_dictionary_word(self) -> None:
+        import dictionary
+
+        text = "他重新走到银行门口，看着落地窗里的自己，长大后的模样。"
+        for token in self.annotate.tokenize(text):
+            if len(token["t"]) > 1 and self.annotate._HAN_ONLY_RE.match(token["t"]):
+                with self.subTest(word=token["t"]):
+                    # Anything grouped can be answered by the hover lookup.
+                    self.assertTrue(dictionary.lookup(token["t"]))
+
+    def test_a_merge_never_ends_on_a_grammatical_particle(self) -> None:
+        # CC-CEDICT knows 中的 as zhòng dì "to hit the target" and 到了 as
+        # dào liǎo, which would be wrong in both of these.
+        surfaces = [t["t"] for t in self.annotate.tokenize("书中的人到了")]
+        self.assertNotIn("中的", surfaces)
+        self.assertNotIn("到了", surfaces)
+        # A particle at the *front* of a real word is untouched.
+        self.assertIn("的确", [t["t"] for t in self.annotate.tokenize("的确如此")])
+
+    def test_a_name_splits_but_keeps_its_whole_span_reading(self) -> None:
+        # No dictionary has the characters' names, so they come apart. The
+        # readings must still be the ones pypinyin gave the whole span.
+        name = "沈谌安"
+        tokens = [t for t in self.annotate.tokenize(name) if t["py"]]
+        self.assertEqual("".join(t["t"] for t in tokens), name)
+        self.assertEqual(
+            " ".join(t["py"] for t in tokens),
+            self.annotate._pinyin_for(name),
+        )
+
+    def test_readings_never_leak_cc_cedict_ascii_notation(self) -> None:
+        # CC-CEDICT writes ü as "u:" and tones as digits; 女 is the classic case.
+        reading = next(
+            t["py"] for t in self.annotate.tokenize("女神") if t["t"] == "女神"
+        )
+        self.assertEqual(reading, "nǚ shén")
+        for token in self.annotate.tokenize("女神旅行绿色，他决定略过。"):
+            if token["py"]:
+                with self.subTest(word=token["t"]):
+                    self.assertNotRegex(token["py"], r"[0-9:]")
+
+    def test_newlines_stay_their_own_tokens(self) -> None:
+        # The client rebuilds paragraphs by splitting on these.
+        tokens = self.annotate.tokenize("第一段。\n\n第二段。")
+        self.assertEqual([t["t"] for t in tokens].count("\n"), 2)
+        self.assertTrue(all(t["py"] is None for t in tokens if t["t"] == "\n"))

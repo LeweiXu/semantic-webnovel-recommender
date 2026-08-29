@@ -1159,9 +1159,6 @@ rt.rt-hidden {
   text-transform: uppercase;
   color: var(--accent);
 }
-/* Nothing sits in the delete column for it, so keep the text lined up with the
-   hand-saved rows below. */
-.bookmark-row.is-progress-row { padding-right: 32px; }
 
 /* ── Download row ────────────────────────────────────────────────────────── */
 .download {

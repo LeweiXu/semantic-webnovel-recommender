@@ -52,7 +52,7 @@ export function BookmarksView() {
 
       <ul className="toc-list bookmark-list">
         {/* Kept by the app rather than the reader, so there is no delete. */}
-        <li className="bookmark-row is-progress-row">
+        <li className="bookmark-row">
           <button
             className="toc-row bookmark-jump is-progress"
             onClick={() => goToLocation(progress.chapter, progress.line)}

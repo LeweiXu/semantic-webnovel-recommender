@@ -41,7 +41,7 @@ from ids import nid_decode, nid_encode
 from schemas import (
     BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
     ChapterPatternPreviewIn, ChapterStub, DefineOut, JoinLinesOut, NovelDetail,
-    ProgressIn, ProgressOut, ReadingItem, SearchItem, ShelfItem,
+    ProgressIn, ProgressOut, ReadingItem, SearchItem, ShelfItem, SimplifyOut,
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
@@ -652,6 +652,43 @@ def join_lines(nid: str, _username: str = Depends(require_admin)) -> JoinLinesOu
     refreshed = _resolve_or_404(nid)
     return JoinLinesOut(
         ok=True, joins=joins, splits=splits,
+        chapters=len(refreshed.chapters), backup=backup_name,
+    )
+
+
+@app.post("/api/novel/{nid:path}/simplify", response_model=SimplifyOut)
+def simplify(nid: str, _username: str = Depends(require_admin)) -> SimplifyOut:
+    """Rewrite stray traditional characters as simplified, editing the .txt.
+
+    Some downloads carry a scattering of traditional characters through
+    otherwise simplified text. Admin-only for the same reason join-lines is: it
+    changes a file in the shared library, not per-user state.
+
+    Every replacement is one character for one character, so unlike join-lines
+    this cannot move chapter boundaries or invalidate a saved reading anchor.
+    """
+    resolved = _resolve_or_404(nid)
+    relative = _download_path(resolved)
+    if relative is None:
+        raise HTTPException(status_code=404, detail="No editable .txt for this novel")
+    target = browse.safe_join(relative)
+    original = read_text_smart(target)
+    converted, changed = dictionary.to_simplified(original)
+    backup_name = None
+    if changed:
+        # Same backup convention as join-lines, including never overwriting one,
+        # so whichever of the two runs first leaves the pristine original there.
+        backup = target.with_name(f".{target.name}.bak")
+        if not backup.exists():
+            backup.write_text(original, encoding="utf-8")
+        backup_name = backup.name
+        staged = target.with_name(f".{target.name}.tmp")
+        staged.write_text(converted, encoding="utf-8")
+        os.replace(staged, target)
+        novels.invalidate_chapters(resolved.url, resolved.id)
+    refreshed = _resolve_or_404(nid)
+    return SimplifyOut(
+        ok=True, converted=changed,
         chapters=len(refreshed.chapters), backup=backup_name,
     )
 

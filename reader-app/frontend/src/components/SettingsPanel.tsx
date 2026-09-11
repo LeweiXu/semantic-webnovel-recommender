@@ -75,6 +75,7 @@ export function SettingsPanel() {
   // Which control last reported an outcome, and what it said.
   const [notice, setNotice] = useState<{ id: string; text: string; bad?: boolean } | null>(null);
   const [joining, setJoining] = useState(false);
+  const [simplifying, setSimplifying] = useState(false);
 
   useEffect(() => {
     if (!notice) return;
@@ -109,6 +110,23 @@ export function SettingsPanel() {
       })
       .catch((e) => say("join", e?.message ?? "Could not edit the file", true))
       .finally(() => setJoining(false));
+  };
+  const simplify = () => {
+    if (!novel) return;
+    setSimplifying(true);
+    api
+      .simplify(novel.slug)
+      .then((r) => {
+        say(
+          "simplify",
+          r.converted === 0
+            ? "No traditional characters found — the file is already simplified."
+            : `Converted ${r.converted} traditional ${r.converted === 1 ? "character" : "characters"}.`
+              + ` ${r.chapters} chapters. Reopen the novel to see it.`,
+        );
+      })
+      .catch((e) => say("simplify", e?.message ?? "Could not edit the file", true))
+      .finally(() => setSimplifying(false));
   };
   // Pinyin controls are meaningless for an English novel — hide them while one
   // is open. They stay visible everywhere else (and for Chinese novels).
@@ -287,6 +305,12 @@ export function SettingsPanel() {
             onConfirm={joinLines}
           />
           {noticeFor("join")}
+          <ConfirmButton
+            label={simplifying ? "Converting…" : "Simplify Characters"}
+            confirmLabel="Edit the .txt"
+            onConfirm={simplify}
+          />
+          {noticeFor("simplify")}
         </div>
       )}
 

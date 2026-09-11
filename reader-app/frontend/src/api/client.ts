@@ -119,6 +119,13 @@ export interface JoinLinesResult {
   backup: string | null;
 }
 
+export interface SimplifyResult {
+  ok: boolean;
+  converted: number; // traditional characters rewritten
+  chapters: number;
+  backup: string | null;
+}
+
 export interface ChapterPatternResult {
   pattern: string;
   matches: number;
@@ -399,6 +406,8 @@ export const api = {
     deleteJSON<Bookmark[]>(
       `/api/novel/${encodeId(nid)}/bookmarks/${encodeURIComponent(id)}`,
     ),
+  simplify: (nid: string) =>
+    postJSON<SimplifyResult>(`/api/novel/${encodeId(nid)}/simplify`),
   previewChapterPattern: (nid: string, sample: string, pattern = "") =>
     postJSON<ChapterPatternResult>(
       `/api/novel/${encodeId(nid)}/chapter-pattern/preview`,

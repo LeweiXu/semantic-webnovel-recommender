@@ -136,6 +136,13 @@ class JoinLinesOut(BaseModel):
     backup: str | None  # where the untouched original was kept, if one was made
 
 
+class SimplifyOut(BaseModel):
+    ok: bool
+    converted: int      # traditional characters rewritten
+    chapters: int       # chapter count after the rewrite (should be unchanged)
+    backup: str | None  # where the untouched original was kept, if one was made
+
+
 class ProgressIn(BaseModel):
     position: int
     line: int | None = None  # null page top; v2 stores a stable character offset

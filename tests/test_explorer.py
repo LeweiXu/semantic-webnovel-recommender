@@ -615,3 +615,121 @@ class AnnotationTests(unittest.TestCase):
         tokens = self.annotate.tokenize("第一段。\n\n第二段。")
         self.assertEqual([t["t"] for t in tokens].count("\n"), 2)
         self.assertTrue(all(t["py"] is None for t in tokens if t["t"] == "\n"))
+
+
+class TraditionalCharacterTests(unittest.TestCase):
+    """The trad-to-simp table derived from CC-CEDICT, and the rewrite it drives."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import dictionary
+
+        cls.dictionary = dictionary
+
+    def test_ordinary_simplified_characters_are_never_mapped(self) -> None:
+        # Each of these sits on the traditional side of some unrelated CC-CEDICT
+        # pair while being perfectly normal simplified text. A naive table maps
+        # them and wrecks the book: 么 alone runs to thousands of hits a novel.
+        table = self.dictionary.traditional_map()
+        for char in "么宁份座覆著沈":
+            with self.subTest(char=char):
+                self.assertNotIn(char, table)
+
+    def test_traditional_only_characters_map_to_their_simplified_form(self) -> None:
+        table = self.dictionary.traditional_map()
+        for traditional, simplified in [
+            ("裏", "里"), ("臺", "台"), ("嘆", "叹"), ("彙", "汇"), ("洩", "泄"),
+            ("檔", "档"), ("竈", "灶"), ("剎", "刹"), ("僞", "伪"), ("鈎", "钩"),
+        ]:
+            with self.subTest(char=traditional):
+                self.assertEqual(table.get(traditional), simplified)
+        # Where several simplified forms exist the common one wins, not the
+        # rare variant (餘 gives 余, not 馀).
+        self.assertEqual(table.get("餘"), "余")
+
+    def test_rewrite_keeps_length_and_leaves_simplified_text_alone(self) -> None:
+        text = "她在屋裏站臺前，那么安静。"
+        converted, changed = self.dictionary.to_simplified(text)
+        self.assertEqual(converted, "她在屋里站台前，那么安静。")
+        self.assertEqual(changed, 2)
+        # One character in, one out: offsets into the text never move, so a
+        # saved reading anchor still points at the same place.
+        self.assertEqual(len(converted), len(text))
+        # Running it again finds nothing left to do.
+        self.assertEqual(self.dictionary.to_simplified(converted), (converted, 0))
+
+
+class SimplifyEndpointTests(unittest.TestCase):
+    """The admin-only character conversion route."""
+
+    TEXT = "第一章 开端\n\n她在屋裏，站臺很远，那么安静。\n\n第二章 继续\n\n正文。\n"
+
+    def _run(self, text: str):
+        from fastapi.testclient import TestClient
+        import app as backend_app
+        from auth import require_admin
+
+        directory = tempfile.TemporaryDirectory()
+        root = Path(directory.name)
+        target = root / "novel.txt"
+        target.write_text(text, encoding="utf-8")
+        with patch.object(browse, "BROWSE_DIR", root):
+            novels._chapter_cache.clear()
+            backend_app.app.dependency_overrides[require_admin] = lambda: "lingwei"
+            try:
+                client = TestClient(backend_app.app)
+                first = client.post("/api/novel/novel.txt/simplify")
+                second = client.post("/api/novel/novel.txt/simplify")
+            finally:
+                backend_app.app.dependency_overrides.clear()
+                novels._chapter_cache.clear()
+        return first, second, target, directory
+
+    def test_conversion_rewrites_the_file_and_keeps_one_backup(self) -> None:
+        first, second, target, directory = self._run(self.TEXT)
+        with directory:
+            self.assertEqual(first.status_code, 200)
+            body = first.json()
+            self.assertEqual(body["converted"], 2)
+            self.assertEqual(body["chapters"], 2)
+
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("她在屋里，站台很远，那么安静。", written)
+            self.assertNotIn("裏", written)
+            # The simplified character that merely looks convertible survives.
+            self.assertIn("那么", written)
+
+            backup = target.with_name(f".{target.name}.bak")
+            self.assertTrue(backup.exists())
+            self.assertEqual(backup.read_text(encoding="utf-8"), self.TEXT)
+            self.assertTrue(body["backup"].startswith("."))
+            self.assertFalse(target.with_name(f".{target.name}.tmp").exists())
+
+            # A second run has nothing to do and must not replace the backup
+            # with an already-converted copy.
+            self.assertEqual(second.json()["converted"], 0)
+            self.assertIsNone(second.json()["backup"])
+            self.assertEqual(backup.read_text(encoding="utf-8"), self.TEXT)
+
+    def test_an_already_simplified_file_is_untouched(self) -> None:
+        text = "第一章 开端\n\n没有繁体字。\n\n第二章 继续\n\n正文。\n"
+        first, _second, target, directory = self._run(text)
+        with directory:
+            self.assertEqual(first.json()["converted"], 0)
+            self.assertIsNone(first.json()["backup"])
+            self.assertEqual(target.read_text(encoding="utf-8"), text)
+            self.assertFalse(target.with_name(f".{target.name}.bak").exists())
+
+    def test_conversion_requires_admin(self) -> None:
+        from fastapi.testclient import TestClient
+        import app as backend_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "novel.txt").write_text(self.TEXT, encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root):
+                novels._chapter_cache.clear()
+                client = TestClient(backend_app.app)
+                response = client.post("/api/novel/novel.txt/simplify")
+                novels._chapter_cache.clear()
+        self.assertIn(response.status_code, (401, 403))

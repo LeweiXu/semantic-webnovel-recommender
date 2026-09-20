@@ -79,6 +79,10 @@ class SPAStaticFiles(StaticFiles):
                 raise
             return await super().get_response("index.html", scope)
 
+# How many uploaded files one search may surface, so they stay visible without
+# pushing the catalogue off the page.
+MAX_FILE_HITS = 8
+
 # Annotated chapters are pure functions of their text, so cache the token lists
 # (segmentation + pinyin) to make re-scrolling and revisits instant.
 _ANNO_CACHE_SIZE = 60
@@ -159,10 +163,11 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
     # can't see them. Match them on filename and skip any the records already
     # cover, so an indexed upload doesn't show up twice.
     indexed = {r.file for r in novels.all_records().values() if r.file}
-    for hit in browse.search(q, limit=limit):
+    files = []
+    for hit in browse.search(q, limit=min(limit, MAX_FILE_HITS)):
         if hit["path"] in indexed:
             continue
-        items.append(SearchItem(
+        files.append(SearchItem(
             url=hit["path"],
             nid=nid_encode(hit["path"]),
             # The browse path is the route id for a file with no record.
@@ -171,7 +176,10 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
             category=UPLOADS_CATEGORY,
             downloaded=True,
         ))
-    return items[:limit]
+    # Your own files lead. The catalogue runs to tens of thousands of records
+    # and would otherwise fill the page before an upload ever got a place; the
+    # cap above keeps them from crowding it out in the other direction.
+    return (files + items)[:limit]
 
 
 # ── Personal library (the explicit shelf) ────────────────────────────────────

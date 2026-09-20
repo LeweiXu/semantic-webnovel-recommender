@@ -177,8 +177,6 @@ changed, so updating a 10k-record corpus after editing a handful of novels costs
 handful of forward passes rather than a full re-encode. `recommend.py build
 --rebuild` forces a full pass.
 
-**Full internals and design rationale: [`recsys/ARCHITECTURE.md`](recsys/ARCHITECTURE.md).**
-
 ---
 
 ## Everything else

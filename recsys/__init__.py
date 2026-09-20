@@ -21,8 +21,6 @@ Public API
 These are exposed lazily (PEP 562): ``import recsys`` and the common
 ``from recsys.store import load_all`` stay cheap and never import torch /
 sentence-transformers until an :class:`Embedder` is actually constructed.
-
-See ``recsys/ARCHITECTURE.md`` for the full pipeline and design rationale.
 """
 from __future__ import annotations
 

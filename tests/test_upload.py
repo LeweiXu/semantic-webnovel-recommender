@@ -12,6 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1] / "reader-app" / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 import recsys.store as store
+import scripts.repo_paths as repo_paths
 import upload_api
 
 
@@ -53,7 +54,7 @@ class SaveTests(unittest.TestCase):
     def test_save_writes_utf8_file_and_record(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.object(upload_api, "LIBRARY_DIR", root), \
+            with patch.object(repo_paths, "LIBRARY_DIR", root), \
                  patch.object(store, "metadata_path", lambda cat: root / cat / "metadata.jsonl"):
                 raw = "第一章 甲\n正文一\n第二章 乙\n正文二".encode("gb18030")  # non-UTF-8 input
                 result = upload_api.save("orig.txt", raw, title="测试书", author="作者", tags=["百合", "甜文"], synopsis="简介")
@@ -72,7 +73,7 @@ class SaveTests(unittest.TestCase):
     def test_save_avoids_clobber(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.object(upload_api, "LIBRARY_DIR", root), \
+            with patch.object(repo_paths, "LIBRARY_DIR", root), \
                  patch.object(store, "metadata_path", lambda cat: root / cat / "metadata.jsonl"):
                 upload_api.save("a.txt", b"one", title="Dup")
                 second = upload_api.save("a.txt", b"two", title="Dup")

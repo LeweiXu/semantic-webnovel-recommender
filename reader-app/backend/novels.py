@@ -16,7 +16,7 @@ from webnovel.library import (
     Chapter, detect_language, local_chapters, local_path, local_synopsis,
     raw_chapters, read_text_smart,
 )
-from scripts.repo_paths import LIBRARY_DIR
+from scripts.repo_paths import store_dirs
 
 import browse
 import chapter_patterns
@@ -64,15 +64,16 @@ class ResolvedNovel:
 def _records() -> dict[str, NovelRecord]:
     global _records_cache, _records_mtimes, _slug_cache
     with _records_lock:
-        paths = sorted(
-            path for path in LIBRARY_DIR.glob("*/metadata.jsonl") if path.is_file()
+        stores = store_dirs()
+        mtimes = tuple(
+            (category, (directory / "metadata.jsonl").stat().st_mtime_ns)
+            for category, directory in stores
         )
-        mtimes = tuple((str(path), path.stat().st_mtime_ns) for path in paths)
         if _records_cache is None or mtimes != _records_mtimes:
-            # Load every category folder that actually has a metadata.jsonl, not
-            # just the fixed crawl CATEGORIES — this is how "uploads" (and any
-            # future non-crawl store) gets picked up by the reader.
-            _records_cache = load_all([path.parent.name for path in paths])
+            # Load every store that actually has a metadata.jsonl, not just the
+            # fixed crawl CATEGORIES — this is how "uploads" (and any future
+            # non-crawl store) gets picked up by the reader.
+            _records_cache = load_all([category for category, _ in stores])
             _records_mtimes = mtimes
             _slug_cache = None  # rebuilt lazily from the fresh records
         return _records_cache

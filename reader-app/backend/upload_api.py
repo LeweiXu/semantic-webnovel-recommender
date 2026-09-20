@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from recsys.store import NovelRecord, upsert_category
-from scripts.repo_paths import LIBRARY_DIR
+from scripts.repo_paths import category_dir
 from webnovel.library import chapters_from_text, decode_text, detect_language
 
 import novels
@@ -87,7 +87,7 @@ def save(
     # Name the file after the confirmed title (clean slug), falling back to the
     # original filename stem.
     stem = _safe_filename(title.strip() or Path(filename).stem)
-    dest_dir = LIBRARY_DIR / UPLOADS_CATEGORY
+    dest_dir = category_dir(UPLOADS_CATEGORY)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     # Don't clobber an existing upload with the same name.

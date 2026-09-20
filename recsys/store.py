@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from repo_paths import CATEGORIES, metadata_path  # noqa: E402
+from repo_paths import STORE_CATEGORIES, metadata_path  # noqa: E402
 
 # Opening-text excerpt budget (chars) folded into the embed-doc for both full
 # (sliced from .txt) and meta (first --pages reading pages) records.
@@ -110,9 +110,13 @@ def load_category(category: str) -> dict[str, NovelRecord]:
 
 
 def load_all(categories: list[str] | None = None) -> dict[str, NovelRecord]:
-    """Merge every category's metadata.jsonl into one {url: NovelRecord}."""
+    """Merge every store's metadata.jsonl into one {url: NovelRecord}.
+
+    Defaults to every store, uploads included, so an uploaded novel is findable
+    by title the same way a crawled one is.
+    """
     merged: dict[str, NovelRecord] = {}
-    for cat in (categories or CATEGORIES):
+    for cat in (categories or STORE_CATEGORIES):
         merged.update(load_category(cat))
     return merged
 

@@ -20,15 +20,17 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
 
+from scripts.repo_paths import LIBRARY_DIR, category_dir
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 REPO_ROOT = Path(__file__).resolve().parent
 DATA_DIR = REPO_ROOT / "data"
-# All downloaded categories live under library/; each category is a subfolder
-# (library/gl/, library/yanqing/, …). OUTPUT_DIR (library/gl/) keeps its name as
-# the default for the GL-only scrapers.
-LIBRARY_DIR = REPO_ROOT / "library"
-OUTPUT_DIR = LIBRARY_DIR / "gl"
+# Where a download lands is repo_paths' call, not ours: library/ is grouped by
+# source (library/52shuku/<category>/) and stating that shape twice is how the
+# two drift apart. OUTPUT_DIR keeps its name as the default for the GL-only
+# scrapers.
+OUTPUT_DIR = category_dir("gl")
 LOG_DIR = REPO_ROOT / "logs"
 FAILED_LOG = LOG_DIR / "failed.log"
 INCOMPLETE_LOG = LOG_DIR / "incomplete.log"
@@ -256,12 +258,13 @@ def category_of_url(url: str) -> str | None:
 
 
 def category_dir_for_url(url: str) -> Path:
-    """The library subfolder a novel from this URL belongs in (library/gl/, …).
+    """The library folder a novel from this URL belongs in.
 
-    Falls back to OUTPUT_DIR (library/gl/) when the URL has no category segment.
+    Falls back to OUTPUT_DIR (the gl folder) when the URL has no category
+    segment.
     """
     cat = category_of_url(url)
-    return LIBRARY_DIR / cat if cat else OUTPUT_DIR
+    return category_dir(cat) if cat else OUTPUT_DIR
 
 
 def is_novel_landing_url(

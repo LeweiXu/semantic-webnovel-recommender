@@ -104,7 +104,7 @@ export function SettingsPanel() {
         say(
           "join",
           done.length === 0
-            ? "Nothing to fix — the file is already clean."
+            ? "Nothing to fix: the file is already clean."
             : `${done.join(", ")}. ${r.chapters} chapters. Reopen the novel to see it.`,
         );
       })
@@ -120,7 +120,7 @@ export function SettingsPanel() {
         say(
           "simplify",
           r.converted === 0
-            ? "No traditional characters found — the file is already simplified."
+            ? "No traditional characters found: the file is already simplified."
             : `Converted ${r.converted} traditional ${r.converted === 1 ? "character" : "characters"}.`
               + ` ${r.chapters} chapters. Reopen the novel to see it.`,
         );
@@ -128,7 +128,7 @@ export function SettingsPanel() {
       .catch((e) => say("simplify", e?.message ?? "Could not edit the file", true))
       .finally(() => setSimplifying(false));
   };
-  // Pinyin controls are meaningless for an English novel — hide them while one
+  // Pinyin controls are meaningless for an English novel, so hide them while
   // is open. They stay visible everywhere else (and for Chinese novels).
   const showPinyin = novel?.language !== "en";
 

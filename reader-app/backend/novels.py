@@ -1,6 +1,6 @@
 """Novel + chapter access, reusing the existing webnovel/recsys library.
 
-The backend never reparses files itself — it leans on the same functions the
+The backend never reparses files itself: it leans on the same functions the
 `read.py` CLI uses, so the web app and the CLI always agree on chapters and
 progress.
 """
@@ -71,7 +71,7 @@ def _records() -> dict[str, NovelRecord]:
         )
         if _records_cache is None or mtimes != _records_mtimes:
             # Load every store that actually has a metadata.jsonl, not just the
-            # fixed crawl CATEGORIES — this is how "uploads" (and any future
+            # fixed crawl CATEGORIES. This is how "uploads" (and any future
             # non-crawl store) gets picked up by the reader.
             _records_cache = load_all([category for category, _ in stores])
             _records_mtimes = mtimes
@@ -176,7 +176,7 @@ def resolve(url: str) -> ResolvedNovel | None:
     synopsis = trim_synopsis_at_first_chapter(synopsis, chapters)
     # 52shuku novels are all Chinese; an uploaded novel might be English, so
     # detect its language from the text to drive pinyin on/off. Sample bodies
-    # only — a generated "Front matter"/"Part" title would skew a short sample.
+    # only, since a generated "Front matter"/"Part" title would skew a sample.
     language = "zh"
     if record.category == "uploads":
         language = detect_language("".join(ch.body for ch in chapters[:3])[:2000])

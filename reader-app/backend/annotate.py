@@ -1,7 +1,7 @@
 """Offline Chinese annotation: segment text and attach per-character pinyin.
 
-jieba proposes a segmentation and CC-CEDICT — the same dictionary the hover
-lookup answers from — gets the final say on it. That reconciliation matters for
+jieba proposes a segmentation and CC-CEDICT (the same dictionary the hover
+lookup answers from) gets the final say on it. That reconciliation matters for
 two reasons:
 
 * jieba's model is context-sensitive, so it keeps 子时 together in one sentence
@@ -17,7 +17,7 @@ down to the words inside it, but its pinyin is taken from pypinyin's reading of
 the *whole* original span, so a name keeps whatever phrase-level reading
 pypinyin had for it.
 
-Definitions are NOT produced here — they are fetched lazily on hover via the
+Definitions are NOT produced here: they are fetched lazily on hover via the
 dictionary endpoint, keeping chapter payloads small.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from pypinyin import Style, pinyin
 
 import dictionary
 
-# CJK Unified Ideographs (incl. common extensions) — what we annotate.
+# CJK Unified Ideographs (incl. common extensions), which is what we annotate.
 _HAN_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 _HAN_ONLY_RE = re.compile(r"^[㐀-䶿一-鿿豈-﫿]+$")
 
@@ -41,8 +41,8 @@ MAX_MERGE_TOKENS = 3
 MAX_SPLIT_CHARS = 4
 
 # Grammatical particles, which attach to whatever precedes them. CC-CEDICT holds
-# rare literary words that collide with those everyday pairings — 中的 is really
-# zhòng dì "to hit the target", 到了 is dào liǎo — so a merge is not allowed to
+# rare literary words that collide with those everyday pairings (中的 is really
+# zhòng dì "to hit the target", 到了 is dào liǎo), so a merge is not allowed to
 # end on one. Without this, "书中的人" reads zhòng dì instead of zhōng de. A
 # particle leading a merge is fine: 的确 and 了解 are ordinary words.
 _TRAILING_PARTICLES = frozenset("的了着过地得们吗呢吧啊呀哦嘛")
@@ -74,7 +74,7 @@ def _dictionary_reading(word: str) -> str | None:
     Returns None when the dictionary doesn't know the word, when its entries
     disagree about the reading (single characters usually do, and pypinyin
     weighs context better there), or when the reading doesn't come to one
-    syllable per character — the client renders one ruby per character.
+    syllable per character, since the client renders one ruby per character.
     """
     entries = dictionary.lookup(word)
     if not entries:

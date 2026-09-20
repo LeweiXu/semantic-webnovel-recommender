@@ -296,7 +296,7 @@ export const useReader = create<ReaderState>((set, get) => ({
     set((s) => {
       const next = open ?? !s.tocOpen;
       // Opening always lands on the table of contents, whichever tab was left
-      // showing last time — the button that opens this is "Contents".
+      // showing last time: the button that opens this is "Contents".
       return {
         tocOpen: next,
         leftOpen: false,

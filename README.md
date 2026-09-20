@@ -41,7 +41,7 @@ What you get:
   explore an interactive 2-D **map** of the embedding space (each dot is a novel;
   closer dots are more semantically alike).
 - One-click **Download** of any result's full text into
-  `library/<category>/<month>/`, then **Read** it in the annotated reader with
+  `library/52shuku/<category>/<month>/`, then **Read** it in the annotated reader with
   pinyin ruby and a hover dictionary.
 
 Notes:
@@ -232,11 +232,15 @@ free-text query is just slower.
 ### Storage layout
 
 ```text
-library/                          # all downloaded categories (git-ignored)
-└── gl/                           # one self-contained folder per category
-    ├── metadata.jsonl            # one recommender record per URL (the embedding store)
-    ├── _catalog.jsonl            # resumable crawl/download graph
-    └── YYYY-MM/title_author.txt   # downloaded full text (never embedded)
+library/                          # git-ignored, grouped by where a novel came from
+├── 52shuku/                      # the crawled source, one folder per category
+│   └── gl/
+│       ├── metadata.jsonl        # one recommender record per URL (the embedding store)
+│       ├── _catalog.jsonl        # resumable crawl/download graph
+│       └── YYYY-MM/title_author.txt   # downloaded full text (never embedded)
+└── uploads/                      # hand-added novels; not crawled, no category split
+    ├── metadata.jsonl            # records for novels uploaded through the app
+    └── *.txt (+ any folders)     # files dropped in by hand
 
 data/rec_index/                   # embeddings.npy + manifest.json (regenerable; git-ignored)
 data/reading_progress.json        # shared reading bookmark (git-ignored)

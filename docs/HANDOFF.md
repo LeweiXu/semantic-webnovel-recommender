@@ -1,155 +1,114 @@
 # Handoff
 
-Snapshot of a big session of reader-app work: mobile support, a novel view page,
-readable URLs, a pile of UI fixes, and reader scroll smoothing. Written 2026-07-17.
-
-## Read this first: deploy coupling
-
-Everything below is committed and pushed to `origin/main` (`webnovel-scraper` on
-GitHub). Two halves of the app deploy separately and this session changed both in
-ways that depend on each other, so they must ship together:
-
-- **Frontend** (Vercel, builds from this repo on push) probably already
-  auto-deployed the new code.
-- **Backend** (home server, `~/Novel_Project`) only updates when you run
-  `./deploy.sh`. It has NOT been deployed this session.
-
-If the frontend is live but the backend is old, the site breaks:
-
-- The frontend now calls `/api/novel/<category>/<stem>` (slug URLs). The old
-  backend only knows `/api/novel/{nid}` and can't match a path with a slash, so
-  every novel/reader page 404s.
-- Settings now sync as `{desktop, mobile}`; the old backend stores a flat blob
-  and would drop them.
-
-**Action: run `./deploy.sh` to bring the server up to `66008f6`.** It now also
-restarts the service for you (see below). After that, frontend and backend agree.
+Where the project stands as of 2026-09-20. Replaces the earlier handoffs from
+2026-07-17 and 2026-08-27, both of which are in git history if you want them.
+Deploy mechanics and server setup live in `docs/DEPLOYMENT.md`, not here.
 
 ## State
 
-- All work is on `main`, tree clean, in sync with `origin/main`.
+- Everything is committed and pushed to `origin/main`, and both halves are
+  deployed. `novel-api` is active and `/api/health` returns
+  `{"ok":true,"dictionary":true}`.
+- 116 tests pass (`~/venvs/recsys/bin/python -m unittest discover -s tests`).
 - Frontend builds clean (`cd reader-app/frontend && npm run build`).
-- Backend tests pass (`~/venvs/recsys/bin/python -m unittest discover -s tests`),
-  26 tests.
-- Not yet verified on a real phone (scroll feel + mobile viewport). See open items.
 
-## Server changes made live this session (not in git)
+## Library layout (the big one)
 
-These were edited straight on the server, separate from the code in the repo:
+`library/` is grouped by source now, not by a flat list of categories:
 
-- **CORS fix.** `~/novel-api.env` had `NOVEL_CORS_ORIGINS=novel-reader-recommender.vercel.app`
-  with no scheme, so the browser's `https://…` origin never matched and every
-  cross-origin request 400'd. Fixed to `https://novel-reader-recommender.vercel.app`,
-  backup at `~/novel-api.env.bak.<ts>`, service restarted.
-- **Reset the `lingwei` account.** Removed it from `~/Novel_Project/data/users.json`
-  (backup alongside) so it could be re-registered after a password typo. Register
-  `lingwei` first on the deployed site to reclaim admin.
+```text
+library/52shuku/<category>/metadata.jsonl, _catalog.jsonl, YYYY-MM/*.txt
+library/uploads/metadata.jsonl, *.txt, and any folders dropped in by hand
+```
 
-## What changed, by area
+Uploads aren't crawled and have no category split, so for them the source folder
+is the store folder. `scripts/repo_paths.py` owns this shape (`category_dir`,
+`metadata_path`, `catalog_path`, `store_dirs`, `source_for`) and nothing else
+should join those paths by hand. `scraper.py` used to keep a second copy of the
+layout and now routes through repo_paths too.
 
-### Mobile support (breakpoint 1024px)
-- `hooks/useIsMobile.ts` (`MOBILE_MAX_WIDTH = 1024`) drives JS-side behaviour;
-  `styles/responsive.css` holds the CSS media queries at the same 1024px. Keep the
-  two in sync.
-- Reader header on mobile shows only Contents (left) and Settings (right); the
-  title stays and links to the novel page (the way out on mobile). Full header on
-  every other view.
-- Library cards drop the synopsis on mobile; novel page goes full-width with a
-  single-column chapter list.
+A record's `file` is always relative to `library/`, so moving the folders meant
+repointing every record. `scripts/migrate_library_layout.py` does that, and it
+only ever rewrites a path to one that exists on disk, so it can't invent a wrong
+one and it's safe to re-run (a second pass finds nothing). It has already been
+run on the server; the pre-migration metadata is backed up at
+`~/library-metadata-backup-20260920/` there.
 
-### Separate desktop/mobile settings
-- Backend `user_settings.py` stores `{ "desktop": {...}, "mobile": {...} }`,
-  allowlisted per profile, partial-merge on PUT, and reads legacy flat files as
-  the desktop profile. GET/PUT `/api/settings` carry the nested shape.
-- Frontend `store/settings.ts` holds both profiles + an active `profile`;
-  `App` sets the active one from `useIsMobile()`. `set()` patches the active
-  profile, `reset()` restores that profile's defaults. localStorage migrates the
-  old flat blob (persist version 2). `useSettingsSync` syncs both profiles.
-- Desktop defaults: 24px / 70rem / 1.6 leading. Mobile has its own tuned defaults.
-  Line-spacing slider is 1.0–3.0.
+Worth knowing: `scripts/` is both a package and on `sys.path`, so
+`scripts.repo_paths` and `repo_paths` can be two different module objects.
+recsys imports the bare one, the reader backend the packaged one. Harmless in
+production since both point at the same directory, but patching one in a test
+silently misses the other. `tests/test_explorer.py` patches every loaded alias.
 
-### Novel view page (`/novel/<id>`)
-- `components/NovelPage.tsx`: title, tags, synopsis, per-chapter TOC. Statically
-  designed to match Discover/Library (own typography, UI font), deliberately NOT
-  driven by the reader's font/pinyin settings.
-- Synopsis truncates at `SYNOPSIS_CAP` (currently 250 chars) with View full /
-  Show less. 2/3 width centered on desktop, full width on mobile; 3-column
-  horizontal chapter grid on desktop, single column on mobile.
-- Reachable from the Library (all four open spots go here), from the reader title,
-  and by direct URL. `tags` was added to `NovelDetail`.
+## Uploads are writable, crawled sources are not
 
-### Readable file-path URLs (slug)
-- Browser URLs are `/novel/<category>/<stem>` and `/reader/<category>/<stem>`
-  (`.txt` dropped), e.g. `/reader/gl/师姐请息怒_柄炳爱吃饼_完结+番外`.
-- Backend derives the slug from `record.file` (`novels.slug_for`), builds a
-  cached `slug -> url` index, and `_resolve_or_404` accepts a slug OR a legacy
-  base64 id (slugs contain a `/`, base64 ids never do). Old shared links still
-  work. Reader/novel/chapter/progress routes use `{nid:path}`, with chapter and
-  progress declared before the catch-all detail route (the greedy converter would
-  otherwise swallow the suffixes).
-- `slug` is on `NovelDetail`, `ReadingItem`, `SearchItem`, rec results, and the
-  download SSE `done` event. Frontend routing/store use the slug and encode each
-  path segment while keeping the slash.
+The file explorer has a right-click menu (long-press on touch). Open, Add to
+library and Download are offered everywhere; Rename and Delete only for files
+under `uploads/`, and only for the admin account. Renaming or deleting a crawled
+file would just desync it from its metadata.jsonl.
 
-### Reader scroll smoothness
-- Header hide no longer animates `margin-bottom` (a layout prop that reflowed the
-  scroll container every frame). In the reader the header is now an overlay
-  (`.app.reading .topbar { position: absolute }`) and hides via `transform` only.
-  The scroll column gets a static 56px top pad; `ScrollReader`'s
-  `READING_TOP_INSET` keeps exact-resume landing your line below the header.
-- `.app` height is `100dvh` (with `100vh` fallback) so the reading area tracks the
-  mobile browser's collapsing toolbars instead of leaving a gap. `html`/`body`
-  are painted with the theme colour so any revealed strip matches the theme.
-- Footer now renders only on Discover.
+The backend decides that and ships a `managed` flag on each browse entry, so the
+rule isn't re-derived from the path shape in the UI, and `browse.py` enforces it
+server-side regardless of what the client offers. Deleting an indexed upload
+drops its metadata record too; renaming one moves the record with the file and
+keeps its `url`, which is what reading progress is keyed by. The shelf entry is
+built from the file name, so after a rename it reappears next time you open the
+book.
 
-### Smaller fixes
-- Word-hover highlight uses a `--word-hover` token; dark/black themes override it
-  to a light wash so it's visible on near-black.
-- Library shelf is cached per-user in localStorage (stale-while-revalidate) so it
-  paints instantly instead of waiting ~1s on the backend.
-- Auth persists the last user optimistically, so reload doesn't flash a
-  logged-out state; the Library empty state is gated on the auth `ready` flag.
-- Discover tag chips are hardcoded (the demo corpus's real top-16 tags) so they
-  render instantly; the semantic map frame renders immediately and points fade in.
+Search covers the uploads folder as well as the catalogue. Your own files lead
+the results, capped at 8, because the 57k-record catalogue would otherwise fill
+the page before an upload got a place.
 
-### deploy.sh
-- Now runs `systemctl --user restart novel-api` over SSH after the rsync and
-  reports `is-active`, so a deploy is one command. `Restart=on-failure` in the
-  unit still covers a bad import.
+## Reader features added recently
 
-## How to deploy
+- **Word counts.** Per chapter in the reading view and in the novel page
+  contents list (right-aligned), plus total and per-chapter average on the novel
+  page. Counted in the unit the language uses: non-whitespace characters for
+  Chinese, whitespace words for English.
+- **Bookmarks.** Any number per novel, per account, in the Navigate drawer
+  alongside the contents. The reading position is pinned at the top of that list
+  as a special entry that can't be deleted. The drawer always opens on Contents,
+  at the chapter you're reading.
+- **Annotation accuracy.** jieba proposes the segmentation, CC-CEDICT settles
+  it, so a word the dictionary knows is grouped the same way in every sentence
+  (子时 used to split in some contexts and not others) and every multi-character
+  group is a real dictionary word, which took the hover-lookup miss rate from
+  27% to 0. A merge may not end on a grammatical particle, or 书中的人 reads
+  zhòng dì instead of zhōng de.
+- **Simplify Characters.** Admin button beside Join Split Sentences. Rewrites
+  stray traditional characters in a novel's .txt. Only maps characters CC-CEDICT
+  never writes in simplified text, which is what keeps it from wrecking 么, 宁,
+  份, 座, 覆, 著 and 沈. One character in, one out, so offsets never move and
+  bookmarks survive.
 
-- **Backend:** `./deploy.sh` (rsyncs code, restarts the service, prints
-  `is-active`). `library/` and `data/` on the server are excluded and untouched.
-- **Frontend:** push to `main`; Vercel rebuilds. If you touched `VITE_API_BASE`,
-  trigger a fresh deploy so it re-inlines.
+## Open items
 
-## Open items / not done
+- **Admin actions still not click-tested on the deployed site.** Join Split
+  Sentences, Simplify Characters and the new rename/delete are all verified at
+  the API level and by tests, but never exercised through the real UI, because
+  that needs the `lingwei` password.
+- **Em dashes.** CLAUDE.md says never use them anywhere, including code
+  comments. About 40 files still have them, nearly all pre-existing
+  (`scraper.py` alone has 19). The ones added in recent sessions are cleaned up.
+  A repo-wide pass is still owed. Careful with test data: the `——` in
+  `tests/test_explorer.py` is Chinese punctuation inside a fixture, not prose.
+- **Library files with a chapter over the 20k rich-render cap** render without
+  pinyin or the click dictionary. Their numbering gives no evidence they are
+  fused, so the splitter deliberately leaves them alone.
+- **Pinyin line spacing goes flat below about 1.75.** With the -0.3 offset the
+  requested value lands under what ruby needs and the browser floors it, so the
+  slider feels unresponsive down there.
+- **Only the header nav uses real links.** Novel cards in Discover/Library are
+  still buttons, so they can't be opened in a new tab.
+- **Chapter indices shift** for any novel the fused-chapter splitter touches, so
+  an old bookmark in one of those lands somewhere different once.
+- **A stale progress entry** for `GL/妖刀姬.txt` (position 0) survives from the
+  old browse root. It is ignored and harmless.
 
-- **Verify on a real phone.** The scroll-smoothness and `dvh` changes are feel/
-  viewport things that couldn't be tested in the dev sandbox. If the header hide
-  still stutters or a bottom gap remains, options include swapping `dvh` for
-  `svh` or tuning the transition.
-- **Scale embeddings to the whole `library/`** (asked about, not built). The
-  library has 57,285 metadata records; embeddings at 1024×4 bytes/record is ~234
-  MB, and serving is a pure NumPy matmul (no GPU). Plan: precompute on the 5070
-  (`python recommend.py update`, CUDA 12.8 torch), rsync `data/rec_index/` to the
-  server, and point Discover at it. `recommend_api` currently hardcodes
-  `reader-app/demo`; add a `NOVEL_REC_DIR` env override so the server can use the
-  full index while the committed 500-record demo stays the default for the public
-  build. Two caveats: free-text query still needs bge-m3 on the server (CPU is
-  fine, ~2 GB RAM, slow first query, model-free browse/Similar/map stay instant),
-  and the semantic map can't render 57k DOM dots so it needs sampling.
-- **`reader-app/README.md`** still documents the old flat settings storage and the
-  pre-slug page list. Worth updating.
+## Local environment
 
-## Gotchas
-
-- Novel ids are dual: slug for downloaded novels (reader/library flows), base64
-  for Discover references (which include non-downloaded corpus novels). The
-  backend resolver takes either; the frontend prefers `slug` and falls back to
-  `nid`.
-- The reader shares one bookmark and only advances forward. Exact-resume math in
-  `ScrollReader` assumes the 56px header overlay (`READING_TOP_INSET`); if the
-  header height changes, update both the CSS pad and that constant.
-- Tests are network-free by design. Keep them that way.
+- `playwright` was pip-installed into `~/venvs/recsys` for browser checks but
+  its browsers aren't downloaded; it can drive the system Chrome with
+  `channel="chrome"` instead. Not in `requirements.txt`.
+- The root directory is meant to hold only entry points and project files. Shell
+  scripts live in `scripts/`, docs in `docs/`.

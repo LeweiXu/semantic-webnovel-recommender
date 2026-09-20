@@ -24,6 +24,7 @@ data/users.json
 data/user_progress/
 data/user_library/
 data/user_settings/
+data/user_bookmarks/
 data/admin_jobs.json
 data/admin_command_history.json
 

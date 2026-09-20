@@ -4,7 +4,7 @@
 # The backend imports the repo-root packages (recsys/, webnovel/, scraper.py,
 # scripts/), so we sync the WHOLE repo, not just reader-app/backend/. Code only:
 # library/ and data/ live on the server and are never touched (see
-# deploy-exclude.txt). After syncing, restart the service on the server.
+# scripts/deploy-exclude.txt). After syncing, restart the service on the server.
 #
 # SERVER defaults to the "homeserver" ssh alias (see ~/.ssh/config: HostName,
 # User, IdentityFile), so a change of the server's IP is a one-line edit there,
@@ -13,12 +13,15 @@ set -euo pipefail
 
 SERVER="${NOVEL_SERVER:-homeserver}"
 DEST="${NOVEL_DEST:-Novel_Project/}"          # relative to the server's home
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in scripts/ but syncs the whole repo, so resolve the root
+# one level up. Getting this wrong would rsync --delete just scripts/ over the
+# server and take everything else with it.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Syncing code -> $SERVER:~/$DEST"
 rsync -avz --delete \
-  --exclude-from="$HERE/deploy-exclude.txt" \
-  "$HERE/" "$SERVER:$DEST"
+  --exclude-from="$ROOT/scripts/deploy-exclude.txt" \
+  "$ROOT/" "$SERVER:$DEST"
 
 # uvicorn holds the code in memory, so new .py files only take effect after a
 # restart. Do it here so a deploy is a single command. Restart=on-failure in the

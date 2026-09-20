@@ -15,12 +15,12 @@ Ports 8000 (G8) and 8001 (LOG) were already taken, so this app uses **8002**.
 
 Done during initial deploy (you don't need to redo these):
 
-- `~/Novel_Project/` — the whole repo, synced by `deploy.sh` (code only).
+- `~/Novel_Project/` — the whole repo, synced by `scripts/deploy.sh` (code only).
 - `~/Novel_Project/library/` — the 9.6 GB library (9,754 novels) seeded once from WSL.
 - `~/venv-novel/` — Python venv with CPU torch, the project (`pip install -e .`), and the
   auth deps (passlib/bcrypt, python-jose, python-multipart).
 - `~/novel-api.env` — holds `NOVEL_JWT_SECRET` and `NOVEL_CORS_ORIGINS`. Lives outside
-  `~/Novel_Project/` on purpose, so `deploy.sh --delete` never wipes it. `chmod 600`.
+  `~/Novel_Project/` on purpose, so `scripts/deploy.sh --delete` never wipes it. `chmod 600`.
 - `~/.config/systemd/user/novel-api.service` — runs uvicorn on 8002, `Restart=on-failure`,
   enabled at boot (user lingering is on, so it survives reboots without a login session).
 - The other apps, nginx, and the root cloudflared service were not touched.
@@ -99,7 +99,7 @@ sharing the URL, since registration is open and whoever claims `lingwei` first i
 **Push code changes** (from the WSL repo):
 
 ```bash
-./deploy.sh                         # rsync code only; library/ and data/ untouched
+./scripts/deploy.sh                         # rsync code only; library/ and data/ untouched
 ssh lingwei@192.168.20.9 'systemctl --user restart novel-api'
 ```
 
@@ -118,7 +118,7 @@ trigger a fresh deploy so it gets re-inlined.
   model (~2 GB, cached under `~/.cache/huggingface` afterward) and takes a few seconds;
   Similar/map/tags need no model and are instant.
 - `data/` on the server (users, per-user progress, JWT secret, admin job registry) is created
-  at runtime and excluded from `deploy.sh`, so it persists across deploys. Back it up if you
+  at runtime and excluded from `scripts/deploy.sh`, so it persists across deploys. Back it up if you
   care about accounts/progress.
 - Password changes: there's no self-serve change-password endpoint yet. To reset an account,
   edit `~/Novel_Project/data/users.json` (remove the user) and re-register.

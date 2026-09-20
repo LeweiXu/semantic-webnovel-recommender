@@ -237,7 +237,6 @@ export function FileBrowser({
           </>
         )}
       </div>
-      <p className="fb-hint">Right-click a file for more (long-press on a phone).</p>
       {dragOver && <div className="fb-drophint">Drop a .txt file to upload</div>}
       {note && <div className="fb-note is-status" role="status">{note}</div>}
 

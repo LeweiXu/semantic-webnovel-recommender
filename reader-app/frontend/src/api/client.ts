@@ -141,6 +141,13 @@ export interface BrowseEntry {
   path: string;
   kind: BrowseKind;
   size: number | null;
+  managed: boolean; // admins may rename/delete it (the uploads subtree)
+}
+
+export interface FileOpResult {
+  ok: boolean;
+  path: string; // where the file ended up ("" when deleted)
+  indexed: boolean; // an uploads metadata record moved with it
 }
 
 export interface BrowseListing {
@@ -390,6 +397,10 @@ export const api = {
     anchor.remove();
     URL.revokeObjectURL(href);
   },
+  renameFile: (path: string, name: string) =>
+    postJSON<FileOpResult>("/api/file/rename", { path, name }),
+  deleteFile: (path: string) =>
+    deleteJSON<FileOpResult>(`/api/file?path=${encodeURIComponent(path)}`),
   novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),
   joinLines: (nid: string) =>
     postJSON<JoinLinesResult>(`/api/novel/${encodeId(nid)}/join-lines`),

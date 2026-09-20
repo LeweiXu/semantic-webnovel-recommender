@@ -73,6 +73,7 @@ class BrowseEntry(BaseModel):
     path: str  # browse-root-relative posix path
     kind: str  # "dir" | "text" | "doc" | "other"
     size: int | None = None
+    managed: bool = False  # admins may rename/delete it (uploads subtree only)
 
 
 class BrowseListing(BaseModel):
@@ -141,6 +142,17 @@ class SimplifyOut(BaseModel):
     converted: int      # traditional characters rewritten
     chapters: int       # chapter count after the rewrite (should be unchanged)
     backup: str | None  # where the untouched original was kept, if one was made
+
+
+class RenameIn(BaseModel):
+    path: str      # browse-relative path of the file to rename
+    name: str      # new file name (not a path); the extension is kept
+
+
+class FileOpOut(BaseModel):
+    ok: bool
+    path: str          # where the file ended up ("" when it was deleted)
+    indexed: bool      # whether an uploads metadata record moved with it
 
 
 class ProgressIn(BaseModel):

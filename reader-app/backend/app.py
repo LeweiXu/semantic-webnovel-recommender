@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from recsys.store import load_category, write_category
+from scripts.repo_paths import UPLOADS_CATEGORY
 from webnovel.library import (
     count_words, join_wrapped_lines, list_library, local_path, read_text_smart,
 )
@@ -41,7 +43,8 @@ from ids import nid_decode, nid_encode
 from schemas import (
     BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
     ChapterPatternPreviewIn, ChapterStub, DefineOut, JoinLinesOut, NovelDetail,
-    ProgressIn, ProgressOut, ReadingItem, SearchItem, ShelfItem, SimplifyOut,
+    FileOpOut, ProgressIn, ProgressOut, ReadingItem, RenameIn, SearchItem,
+    ShelfItem, SimplifyOut,
 )
 
 app = FastAPI(title="Webnovel Reader", version="1.0")
@@ -139,7 +142,7 @@ def reading(username: str = Depends(current_user)) -> list[ReadingItem]:
 @app.get("/api/library/search", response_model=list[SearchItem])
 def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -> list[SearchItem]:
     results = list_library(query=q, limit=limit)
-    return [
+    items = [
         SearchItem(
             url=r.url,
             nid=nid_encode(r.url),
@@ -152,6 +155,23 @@ def search(q: str = Query(default=""), limit: int = Query(default=30, le=100)) -
         )
         for r in results
     ]
+    # Most uploaded files were never indexed, so the catalogue search above
+    # can't see them. Match them on filename and skip any the records already
+    # cover, so an indexed upload doesn't show up twice.
+    indexed = {r.file for r in novels.all_records().values() if r.file}
+    for hit in browse.search(q, limit=limit):
+        if hit["path"] in indexed:
+            continue
+        items.append(SearchItem(
+            url=hit["path"],
+            nid=nid_encode(hit["path"]),
+            # The browse path is the route id for a file with no record.
+            slug=hit["path"] if hit["kind"] == "text" else None,
+            title=Path(hit["name"]).stem,
+            category=UPLOADS_CATEGORY,
+            downloaded=True,
+        ))
+    return items[:limit]
 
 
 # ── Personal library (the explicit shelf) ────────────────────────────────────
@@ -270,6 +290,54 @@ def file_download(path: str = Query(...), _username: str = Depends(current_user)
     if not target.is_file() or browse.classify(target) not in ("doc", "text"):
         raise HTTPException(status_code=404, detail="No such file")
     return FileResponse(target, filename=target.name)
+
+
+def _resync_upload_record(old_rel: str, new_rel: str | None) -> bool:
+    """Keep uploads/metadata.jsonl in step with a renamed or deleted file.
+
+    Returns whether a record actually pointed at the file. A rename keeps the
+    record's url, which is what reading progress is keyed by, so progress
+    survives; only its shelf id (built from the file name) moves.
+    """
+    records = load_category(UPLOADS_CATEGORY)
+    match = next((r for r in records.values() if r.file == old_rel), None)
+    if match is None:
+        return False
+    if new_rel is None:
+        records.pop(match.url, None)
+    else:
+        match.file = new_rel
+    write_category(UPLOADS_CATEGORY, records)
+    novels.invalidate(match.url)
+    return True
+
+
+@app.post("/api/file/rename", response_model=FileOpOut)
+def file_rename(body: RenameIn, _username: str = Depends(require_admin)) -> FileOpOut:
+    """Rename a file in the uploads folder. Admin-only: it edits the library."""
+    try:
+        destination = browse.rename(body.path, body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Could not rename the file") from exc
+    indexed = _resync_upload_record(body.path, destination)
+    novels.invalidate_chapters(body.path, destination)
+    return FileOpOut(ok=True, path=destination, indexed=indexed)
+
+
+@app.delete("/api/file", response_model=FileOpOut)
+def file_delete(path: str = Query(...), _username: str = Depends(require_admin)) -> FileOpOut:
+    """Delete a file from the uploads folder. Admin-only, and not undoable."""
+    try:
+        browse.delete(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Could not delete the file") from exc
+    indexed = _resync_upload_record(path, None)
+    novels.invalidate_chapters(path)
+    return FileOpOut(ok=True, path="", indexed=indexed)
 
 
 def _download_path(resolved) -> str | None:

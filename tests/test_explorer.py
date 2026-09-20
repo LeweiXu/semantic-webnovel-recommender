@@ -4,6 +4,7 @@ Network-free like the rest of the suite: everything runs against temp dirs.
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -733,3 +734,244 @@ class SimplifyEndpointTests(unittest.TestCase):
                 response = client.post("/api/novel/novel.txt/simplify")
                 novels._chapter_cache.clear()
         self.assertIn(response.status_code, (401, 403))
+
+
+class LibraryLayoutTests(unittest.TestCase):
+    """library/ is grouped by source: 52shuku/<category>/ and uploads/."""
+
+    def test_paths_are_grouped_by_source(self) -> None:
+        import scripts.repo_paths as repo_paths
+
+        self.assertEqual(
+            repo_paths.category_dir("gl"),
+            repo_paths.LIBRARY_DIR / "52shuku" / "gl",
+        )
+        self.assertEqual(
+            repo_paths.metadata_path("yanqing"),
+            repo_paths.LIBRARY_DIR / "52shuku" / "yanqing" / "metadata.jsonl",
+        )
+        # Uploads aren't crawled and have no category split, so the source
+        # folder is the store folder.
+        self.assertEqual(
+            repo_paths.category_dir("uploads"), repo_paths.LIBRARY_DIR / "uploads"
+        )
+        self.assertEqual(repo_paths.source_for("gl"), "52shuku")
+        self.assertEqual(repo_paths.source_for("uploads"), "uploads")
+        # Uploads are a store like any other, which is what puts them in search.
+        self.assertIn("uploads", repo_paths.STORE_CATEGORIES)
+
+    def test_stores_are_discovered_under_both_sources(self) -> None:
+        import scripts.repo_paths as repo_paths
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in ("52shuku/gl", "52shuku/yanqing", "uploads"):
+                (root / relative).mkdir(parents=True)
+                (root / relative / "metadata.jsonl").write_text("", encoding="utf-8")
+            # A category folder with no metadata.jsonl is not a store.
+            (root / "52shuku" / "empty").mkdir()
+            with patch.object(repo_paths, "LIBRARY_DIR", root):
+                found = dict(repo_paths.store_dirs())
+            self.assertEqual(sorted(found), ["gl", "uploads", "yanqing"])
+            self.assertEqual(found["gl"], root / "52shuku" / "gl")
+            self.assertEqual(found["uploads"], root / "uploads")
+
+
+class ManagedFileTests(unittest.TestCase):
+    """Renaming and deleting is confined to the uploads subtree."""
+
+    def _tree(self, root: Path) -> None:
+        (root / "uploads").mkdir(parents=True)
+        (root / "52shuku" / "gl").mkdir(parents=True)
+        (root / "uploads" / "mine.txt").write_text("正文", encoding="utf-8")
+        (root / "52shuku" / "gl" / "crawled.txt").write_text("正文", encoding="utf-8")
+
+    def test_only_the_uploads_subtree_is_writable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._tree(root)
+            with patch.object(browse, "BROWSE_DIR", root):
+                self.assertTrue(browse.managed(root / "uploads" / "mine.txt"))
+                # A crawled file is described by its metadata.jsonl; moving it
+                # from the file explorer would only desync the two.
+                self.assertFalse(browse.managed(root / "52shuku" / "gl" / "crawled.txt"))
+                self.assertFalse(browse.managed(root / "uploads"))
+                with self.assertRaises(ValueError):
+                    browse.delete("52shuku/gl/crawled.txt")
+                with self.assertRaises(ValueError):
+                    browse.rename("52shuku/gl/crawled.txt", "new.txt")
+                self.assertTrue((root / "52shuku" / "gl" / "crawled.txt").exists())
+
+    def test_rename_keeps_the_extension_and_stays_put(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._tree(root)
+            with patch.object(browse, "BROWSE_DIR", root):
+                self.assertEqual(browse.rename("uploads/mine.txt", "renamed"), "uploads/renamed.txt")
+                self.assertTrue((root / "uploads" / "renamed.txt").exists())
+                # A name, never a path: renaming must not move a file out.
+                for bad in ("../escaped.txt", "sub/nested.txt", "", "   ", ".hidden"):
+                    with self.subTest(name=bad):
+                        with self.assertRaises(ValueError):
+                            browse.rename("uploads/renamed.txt", bad)
+                (root / "uploads" / "taken.txt").write_text("x", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    browse.rename("uploads/renamed.txt", "taken")
+
+    def test_search_covers_uploads_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._tree(root)
+            (root / "uploads" / "nested").mkdir()
+            (root / "uploads" / "nested" / "deep novel.txt").write_text("x", encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root):
+                self.assertEqual(
+                    [hit["path"] for hit in browse.search("mine")], ["uploads/mine.txt"]
+                )
+                # Recurses into folders people drop in.
+                self.assertEqual(
+                    [hit["path"] for hit in browse.search("deep")],
+                    ["uploads/nested/deep novel.txt"],
+                )
+                # Crawled files are covered by the catalogue search instead.
+                self.assertEqual(browse.search("crawled"), [])
+                self.assertEqual(browse.search(""), [])
+
+
+class FileOpEndpointTests(unittest.TestCase):
+    """The admin-only rename/delete routes, and uploads search."""
+
+    def _setup(self, root: Path):
+        from fastapi.testclient import TestClient
+        import app as backend_app
+        import scripts.repo_paths as repo_paths
+        from auth import require_admin
+
+        (root / "uploads").mkdir(parents=True)
+        (root / "52shuku" / "gl").mkdir(parents=True)
+        (root / "uploads" / "loose.txt").write_text("第一章 甲\n正文\n", encoding="utf-8")
+        (root / "uploads" / "indexed.txt").write_text("第一章 甲\n正文\n", encoding="utf-8")
+        (root / "52shuku" / "gl" / "crawled.txt").write_text("第一章 甲\n正文\n", encoding="utf-8")
+        # One upload that a metadata record points at, one that none does.
+        (root / "uploads" / "metadata.jsonl").write_text(
+            json.dumps({
+                "url": "upload:uploads/indexed.txt", "title": "Indexed",
+                "category": "uploads", "file": "uploads/indexed.txt",
+            }, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        # scripts/ is both a package and on sys.path, so "scripts.repo_paths"
+        # and "repo_paths" can be two module objects holding their own
+        # LIBRARY_DIR. recsys imports the bare one, the reader backend the
+        # packaged one, so redirecting the library means patching whichever of
+        # them is loaded.
+        aliases = {repo_paths, sys.modules.get("repo_paths")} - {None}
+        patches = [patch.object(browse, "BROWSE_DIR", root)]
+        patches += [patch.object(module, "LIBRARY_DIR", root) for module in aliases]
+        for item in patches:
+            item.start()
+        novels.invalidate_all_chapters()
+        novels._records_cache = None
+        novels._records_mtimes = None
+        backend_app.app.dependency_overrides[require_admin] = lambda: "lingwei"
+        return TestClient(backend_app.app), patches
+
+    def _teardown(self, patches) -> None:
+        import app as backend_app
+
+        for item in patches:
+            item.stop()
+        backend_app.app.dependency_overrides.clear()
+        novels.invalidate_all_chapters()
+        novels._records_cache = None
+        novels._records_mtimes = None
+
+    def test_rename_moves_the_metadata_record_with_the_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, patches = self._setup(root)
+            try:
+                response = client.post(
+                    "/api/file/rename", json={"path": "uploads/indexed.txt", "name": "Renamed"}
+                )
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body["path"], "uploads/Renamed.txt")
+                self.assertTrue(body["indexed"])
+                self.assertTrue((root / "uploads" / "Renamed.txt").exists())
+
+                record = json.loads((root / "uploads" / "metadata.jsonl").read_text(encoding="utf-8").strip())
+                self.assertEqual(record["file"], "uploads/Renamed.txt")
+                # The url is what reading progress is keyed by, so it stays put.
+                self.assertEqual(record["url"], "upload:uploads/indexed.txt")
+            finally:
+                self._teardown(patches)
+
+    def test_deleting_an_indexed_upload_drops_its_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, patches = self._setup(root)
+            try:
+                body = client.delete("/api/file?path=uploads/indexed.txt").json()
+                self.assertTrue(body["indexed"])
+                self.assertFalse((root / "uploads" / "indexed.txt").exists())
+                self.assertEqual(
+                    (root / "uploads" / "metadata.jsonl").read_text(encoding="utf-8").strip(), ""
+                )
+                # A file no record describes just goes away.
+                loose = client.delete("/api/file?path=uploads/loose.txt").json()
+                self.assertFalse(loose["indexed"])
+                self.assertFalse((root / "uploads" / "loose.txt").exists())
+            finally:
+                self._teardown(patches)
+
+    def test_crawled_files_cannot_be_renamed_or_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, patches = self._setup(root)
+            try:
+                deleted = client.delete("/api/file?path=52shuku/gl/crawled.txt")
+                renamed = client.post(
+                    "/api/file/rename", json={"path": "52shuku/gl/crawled.txt", "name": "x"}
+                )
+                self.assertEqual(deleted.status_code, 400)
+                self.assertEqual(renamed.status_code, 400)
+                self.assertTrue((root / "52shuku" / "gl" / "crawled.txt").exists())
+            finally:
+                self._teardown(patches)
+
+    def test_search_finds_unindexed_uploads_without_duplicating_indexed_ones(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, patches = self._setup(root)
+            try:
+                loose = client.get("/api/library/search?q=loose").json()
+                self.assertEqual([r["title"] for r in loose], ["loose"])
+                # The browse path is the route id for a file with no record.
+                self.assertEqual(loose[0]["slug"], "uploads/loose.txt")
+                self.assertTrue(loose[0]["downloaded"])
+
+                # The indexed one is described by a record, so it appears once.
+                indexed = client.get("/api/library/search?q=indexed").json()
+                self.assertEqual(len(indexed), 1)
+                self.assertEqual(indexed[0]["url"], "upload:uploads/indexed.txt")
+            finally:
+                self._teardown(patches)
+
+    def test_file_operations_require_admin(self) -> None:
+        from fastapi.testclient import TestClient
+        import app as backend_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "uploads").mkdir(parents=True)
+            (root / "uploads" / "loose.txt").write_text("x", encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root):
+                client = TestClient(backend_app.app)
+                deleted = client.delete("/api/file?path=uploads/loose.txt")
+                renamed = client.post(
+                    "/api/file/rename", json={"path": "uploads/loose.txt", "name": "x"}
+                )
+                self.assertIn(deleted.status_code, (401, 403))
+                self.assertIn(renamed.status_code, (401, 403))
+                self.assertTrue((root / "uploads" / "loose.txt").exists())

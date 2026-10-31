@@ -57,7 +57,8 @@ export function FileBrowser({
   const [note, setNote] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   // Files waiting for their confirm modal, one modal per book, in pick order.
-  const [queue, setQueue] = useState<File[]>([]);
+  // Each remembers the folder it was picked in, which is where it lands.
+  const [queue, setQueue] = useState<{ file: File; folder: string }[]>([]);
   const [uploadedAny, setUploadedAny] = useState(false);
   const [menu, setMenu] = useState<MenuAt | null>(null);
   const [renaming, setRenaming] = useState<{ entry: BrowseEntry; value: string } | null>(null);
@@ -66,6 +67,9 @@ export function FileBrowser({
   const fileInput = useRef<HTMLInputElement>(null);
   const longPress = useRef<number | null>(null);
 
+  // Uploads land in the open folder when it's inside uploads/, else uploads/ itself.
+  const uploadFolder = path === "uploads" || path.startsWith("uploads/") ? path : "uploads";
+
   const pickFiles = (list: FileList | null | undefined) => {
     const files = Array.from(list ?? []);
     if (!files.length) return;
@@ -73,7 +77,7 @@ export function FileBrowser({
     const skipped = files.length - txt.length;
     setError(null);
     setNote(skipped ? `Skipped ${skipped} non-.txt file${skipped > 1 ? "s" : ""}.` : null);
-    if (txt.length) setQueue((q) => [...q, ...txt]);
+    if (txt.length) setQueue((q) => [...q, ...txt.map((file) => ({ file, folder: uploadFolder }))]);
   };
 
   // Move on to the next queued book; once the queue empties, show the uploads
@@ -85,18 +89,20 @@ export function FileBrowser({
       setQueue((q) => q.slice(1));
       return;
     }
+    const folder = queue[0]?.folder ?? "uploads";
     setQueue([]);
     setUploadedAny(false);
     if (done) {
-      goTo("uploads"); // show the new files where they landed
+      goTo(folder); // show the new files where they landed
       onChange?.();
     }
   };
 
   const cancelAll = () => {
+    const folder = queue[0]?.folder ?? "uploads";
     setQueue([]);
     if (uploadedAny) {
-      goTo("uploads");
+      goTo(folder);
       onChange?.();
     }
     setUploadedAny(false);
@@ -252,7 +258,7 @@ export function FileBrowser({
         </nav>
         {user && (
           <>
-            <button className="fb-upload" onClick={() => fileInput.current?.click()} title="Upload .txt novels">
+            <button className="fb-upload" onClick={() => fileInput.current?.click()} title={`Upload .txt novels into ${uploadFolder}/`}>
               ↑ Upload .txt
             </button>
             <input
@@ -266,7 +272,7 @@ export function FileBrowser({
           </>
         )}
       </div>
-      {dragOver && <div className="fb-drophint">Drop .txt files to upload</div>}
+      {dragOver && <div className="fb-drophint">Drop .txt files to upload into {uploadFolder}/</div>}
       {note && <div className="fb-note is-status" role="status">{note}</div>}
 
       {error ? (
@@ -397,8 +403,9 @@ export function FileBrowser({
       {queue.length > 0 && (
         <UploadModal
           // Keyed per file so each book gets a fresh form, not the last one's edits.
-          key={`${queue[0].name}-${queue[0].lastModified}-${queue.length}`}
-          file={queue[0]}
+          key={`${queue[0].file.name}-${queue[0].file.lastModified}-${queue.length}`}
+          file={queue[0].file}
+          folder={queue[0].folder}
           remaining={queue.length - 1}
           onClose={() => advance(false)}
           onCancelAll={cancelAll}

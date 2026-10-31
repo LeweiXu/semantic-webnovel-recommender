@@ -3,6 +3,7 @@ import { api, type UploadResult } from "../api/client";
 
 interface Props {
   file: File;
+  folder: string; // browse path the book is saved into
   remaining?: number; // books still queued after this one
   onClose: () => void; // skip this book (moves on to the next queued one)
   onCancelAll?: () => void;
@@ -11,7 +12,7 @@ interface Props {
 
 // Confirm-before-upload modal: autodetects metadata from the dropped .txt, then
 // lets the user fix it before the file is written to library/uploads/.
-export function UploadModal({ file, remaining = 0, onClose, onCancelAll, onUploaded }: Props) {
+export function UploadModal({ file, folder, remaining = 0, onClose, onCancelAll, onUploaded }: Props) {
   const [detecting, setDetecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,7 +55,7 @@ export function UploadModal({ file, remaining = 0, onClose, onCancelAll, onUploa
     setBusy(true);
     setError(null);
     api
-      .uploadTxt(file, { title, author, tags, synopsis, status })
+      .uploadTxt(file, { title, author, tags, synopsis, status }, folder)
       .then(onUploaded)
       .catch((e) => {
         setError(e?.message ?? "Upload failed");
@@ -79,6 +80,7 @@ export function UploadModal({ file, remaining = 0, onClose, onCancelAll, onUploa
           {file.name}
           {chapters != null && <span className="upload-detected"> · {chapters} chapters · {language === "en" ? "EN" : "中文"}</span>}
         </div>
+        <div className="upload-dest">Saving to {folder}/</div>
 
         {detecting ? (
           <div className="fb-note">Reading file…</div>

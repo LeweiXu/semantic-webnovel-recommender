@@ -115,7 +115,9 @@ def search(query: str, limit: int = 30, root: str = MANAGED_ROOT) -> list[dict]:
     for child in base.rglob("*"):
         if len(hits) >= limit:
             break
-        if child.name.startswith((".", "_")) or not child.is_file():
+        if any(part.startswith((".", "_")) for part in child.relative_to(base).parts):
+            continue  # also keeps the backup repo's .git/ out of results
+        if not child.is_file():
             continue
         kind = classify(child)
         if kind not in ("text", "doc"):

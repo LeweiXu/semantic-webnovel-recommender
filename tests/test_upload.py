@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import recsys.store as store
 import scripts.repo_paths as repo_paths
+import backup
 import upload_api
 
 
@@ -50,7 +52,21 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(meta["language"], "en")
 
 
+def _library(root: Path):
+    """Point the library at a temp dir (and keep backups from firing)."""
+    return (
+        patch.object(repo_paths, "LIBRARY_DIR", root),
+        patch.object(store, "metadata_path", lambda cat: root / cat / "metadata.jsonl"),
+        patch.object(backup, "schedule", lambda *a, **k: None),
+    )
+
+
 class SaveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        stop = patch.object(backup, "schedule", lambda *a, **k: None)
+        stop.start()
+        self.addCleanup(stop.stop)
+
     def test_save_writes_utf8_file_and_record(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -80,6 +96,66 @@ class SaveTests(unittest.TestCase):
                 self.assertEqual(second["id"], "uploads/Dup_2")
                 self.assertTrue((root / "uploads" / "Dup.txt").exists())
                 self.assertTrue((root / "uploads" / "Dup_2.txt").exists())
+
+    def test_save_into_subfolder_keeps_stems_unique_across_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            a, b, c = _library(root)
+            with a, b, c:
+                upload_api.save("x.txt", b"one", title="Book", subdir="English/LN")
+                second = upload_api.save("y.txt", b"two", title="Book", subdir="Other")
+                self.assertTrue((root / "uploads" / "English" / "LN" / "Book.txt").exists())
+                # Same title in another folder still gets its own reader slug.
+                self.assertEqual(second["id"], "uploads/Book_2")
+                self.assertTrue((root / "uploads" / "Other" / "Book_2.txt").exists())
+
+    def test_subfolder_cannot_escape_uploads(self) -> None:
+        self.assertEqual(upload_api.safe_subdir("../../etc"), "etc")
+        self.assertEqual(upload_api.safe_subdir("a/.git/b"), "a/b")
+
+
+class MoveTests(unittest.TestCase):
+    def test_move_plan_moves_file_and_record_keeping_url(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            a, b, c = _library(root)
+            with a, b, c:
+                saved = upload_api.save("x.txt", b"text", title="Book", subdir="Old")
+                plan = root / "plan.json"
+                plan.write_text(json.dumps({"Old/Book.txt": "New/Shelf"}), encoding="utf-8")
+                moved = upload_api._cli_move(plan)
+                self.assertEqual(moved, ["New/Shelf/Book.txt"])
+                self.assertFalse((root / "uploads" / "Old").exists())  # emptied, removed
+                record = store.load_category("uploads")[saved["url"]]
+                self.assertEqual(record.file, "uploads/New/Shelf/Book.txt")
+
+
+class BackupTests(unittest.TestCase):
+    def _git(self, cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        ).stdout
+
+    def test_sync_commits_and_pushes_to_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote, repo = root / "remote.git", root / "uploads"
+            self._git(root, "init", "-q", "--bare", str(remote))
+            repo.mkdir()
+            self._git(repo, "init", "-q")
+            self._git(repo, "config", "user.name", "t")
+            self._git(repo, "config", "user.email", "t@example.com")
+            self._git(repo, "remote", "add", "origin", str(remote))
+            (repo / "a.txt").write_text("hello", encoding="utf-8")
+            self.assertTrue(backup.sync(repo))
+            self.assertIn("a.txt", self._git(remote, "ls-tree", "-r", "--name-only", "HEAD"))
+            # Nothing changed: still fine, no new commit.
+            self.assertTrue(backup.sync(repo))
+            self.assertEqual(self._git(remote, "rev-list", "--count", "HEAD").strip(), "1")
+
+    def test_sync_is_noop_without_a_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(backup.sync(Path(directory)))
 
 
 if __name__ == "__main__":

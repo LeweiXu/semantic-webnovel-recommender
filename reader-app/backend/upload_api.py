@@ -7,14 +7,17 @@ pre-fills that form; the user always confirms before anything is written.
 """
 from __future__ import annotations
 
+import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from recsys.store import NovelRecord, upsert_category
+from recsys.store import NovelRecord, load_category, upsert_category, write_category
 from scripts.repo_paths import category_dir
 from webnovel.library import chapters_from_text, decode_text, detect_language
 
+import backup
 import novels
 
 UPLOADS_CATEGORY = "uploads"
@@ -72,6 +75,21 @@ def detect(filename: str, raw: bytes) -> dict:
     }
 
 
+def safe_subdir(subdir: str) -> str:
+    """Clean a folder path relative to uploads/ ("" is the uploads root)."""
+    parts = [
+        _safe_filename(part) for part in Path(subdir).parts
+        if part not in ("", "/") and not part.startswith((".", "_"))  # also drops ".."
+    ]
+    return "/".join(part for part in parts if part)
+
+
+def _taken_stems(root: Path) -> set[str]:
+    # Reader slugs are "uploads/<stem>" whatever the folder, so stems have to be
+    # unique across the whole uploads tree, not just within one folder.
+    return {p.stem.casefold() for p in root.rglob("*.txt") if ".git" not in p.parts}
+
+
 def save(
     filename: str,
     raw: bytes,
@@ -81,25 +99,33 @@ def save(
     tags: list[str] | None = None,
     synopsis: str = "",
     status: str = "",
+    subdir: str = "",
+    sync: bool = True,
 ) -> dict:
-    """Write the file (normalised to UTF-8) and upsert its metadata record."""
+    """Write the file (normalised to UTF-8) and upsert its metadata record.
+
+    `subdir` is a folder under uploads/ to save into (created if needed).
+    """
     text = decode_text(raw)
     # Name the file after the confirmed title (clean slug), falling back to the
     # original filename stem.
     stem = _safe_filename(title.strip() or Path(filename).stem)
-    dest_dir = category_dir(UPLOADS_CATEGORY)
+    root = category_dir(UPLOADS_CATEGORY)
+    subdir = safe_subdir(subdir)
+    dest_dir = root / subdir if subdir else root
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Don't clobber an existing upload with the same name.
+    # Don't clobber an existing upload, or reuse its stem anywhere in uploads/.
+    taken = _taken_stems(root)
     fname = f"{stem}.txt"
     counter = 2
-    while (dest_dir / fname).exists():
+    while Path(fname).stem.casefold() in taken:
         fname = f"{stem}_{counter}.txt"
         counter += 1
     dest = dest_dir / fname
     dest.write_text(text, encoding="utf-8")
 
-    rel = f"{UPLOADS_CATEGORY}/{fname}"
+    rel = "/".join(part for part in (UPLOADS_CATEGORY, subdir, fname) if part)
     chapters = chapters_from_text(text)
     now = datetime.now()
     record = NovelRecord(
@@ -118,6 +144,8 @@ def save(
     )
     upsert_category(UPLOADS_CATEGORY, [record])
     novels.invalidate(record.url)
+    if sync:
+        backup.schedule()
 
     return {
         "id": f"{UPLOADS_CATEGORY}/{Path(fname).stem}",  # slug the reader opens by
@@ -125,3 +153,123 @@ def save(
         "title": record.title,
         "chapter_count": record.chapter_count,
     }
+
+
+def resync_record(old_rel: str, new_rel: str | None) -> bool:
+    """Keep uploads/metadata.jsonl in step with a moved, renamed or deleted file.
+
+    Returns whether a record actually pointed at the file. A move keeps the
+    record's url, which is what reading progress is keyed by, so progress
+    survives; only its shelf id (built from the file name) changes.
+    """
+    records = load_category(UPLOADS_CATEGORY)
+    match = next((r for r in records.values() if r.file == old_rel), None)
+    if match is None:
+        return False
+    if new_rel is None:
+        records.pop(match.url, None)
+    else:
+        match.file = new_rel
+    write_category(UPLOADS_CATEGORY, records)
+    novels.invalidate(match.url)
+    return True
+
+
+# ── Server-side CLI, used by scripts/epub_to_txt.py over ssh ─────────────────
+#
+#   python reader-app/backend/upload_api.py names           JSON list of what's here
+#   python reader-app/backend/upload_api.py import <dir>    save <dir>/manifest.json books
+#   python reader-app/backend/upload_api.py move <plan>     reorganise existing uploads
+#
+# Run from the repo root with PYTHONPATH=.:reader-app/backend. Each command
+# ends with one backup sync instead of one per book.
+
+def _cli_names() -> dict:
+    """Every title and file stem on the server, for "is this already here?"."""
+    from recsys.store import load_all
+    from scripts.repo_paths import store_dirs
+
+    root = category_dir(UPLOADS_CATEGORY)
+    files = sorted(
+        p.relative_to(root).as_posix() for p in root.rglob("*.txt") if ".git" not in p.parts
+    )
+    records = load_all([category for category, _ in store_dirs()])
+    titles = sorted({r.title for r in records.values() if r.file})
+    uploads = [
+        {"file": r.file, "title": r.title, "author": r.author, "synopsis": r.synopsis[:300]}
+        for r in load_category(UPLOADS_CATEGORY).values()
+    ]
+    return {"files": files, "titles": titles, "uploads": uploads}
+
+
+def _cli_import(staging: Path) -> list[dict]:
+    """Save each book in staging/manifest.json:
+    [{"path": "x.txt", "folder": "English/Light Novels", "title", "author", ...}]."""
+    manifest = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
+    saved = []
+    for item in manifest:
+        raw = (staging / item["path"]).read_bytes()
+        guess = detect(item["path"], raw)
+        saved.append(save(
+            item["path"], raw,
+            title=item.get("title") or guess["title"],
+            author=item.get("author") or guess["author"],
+            tags=item.get("tags") or [],
+            synopsis=item.get("synopsis") or guess["synopsis"],
+            status=item.get("status") or guess["status"],
+            subdir=item.get("folder", ""),
+            sync=False,
+        ))
+    return saved
+
+
+def _cli_move(plan_path: Path) -> list[str]:
+    """Apply {"<old path under uploads/>": "<new folder under uploads/>"}."""
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    root = category_dir(UPLOADS_CATEGORY)
+    moved = []
+    for old, folder in plan.items():
+        source = root / old
+        if not source.is_file():
+            print(f"skip (missing): {old}", file=sys.stderr)
+            continue
+        folder = safe_subdir(folder)
+        dest = (root / folder if folder else root) / source.name
+        if dest == source:
+            continue
+        if dest.exists():
+            print(f"skip (exists): {old} -> {folder}", file=sys.stderr)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(dest)
+        resync_record(
+            f"{UPLOADS_CATEGORY}/{old}",
+            f"{UPLOADS_CATEGORY}/{dest.relative_to(root).as_posix()}",
+        )
+        moved.append(dest.relative_to(root).as_posix())
+    # Drop folders the move left empty.
+    for directory in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if directory.is_dir() and ".git" not in directory.parts and not any(directory.iterdir()):
+            directory.rmdir()
+    return moved
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if not args or args[0] not in {"names", "import", "move"}:
+        print("usage: upload_api.py names | import <dir> | move <plan.json>", file=sys.stderr)
+        return 2
+    if args[0] == "names":
+        result = _cli_names()
+    elif args[0] == "import":
+        result = _cli_import(Path(args[1]))
+    else:
+        result = _cli_move(Path(args[1]))
+    if args[0] != "names":
+        print(f"backup pushed: {backup.sync()}", file=sys.stderr)
+    print(json.dumps(result, ensure_ascii=False, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

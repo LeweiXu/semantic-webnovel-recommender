@@ -19,3 +19,4 @@ venv/
 .agents/
 reader-app/frontend/node_modules/
 reader-app/frontend/dist/
+/Novels/

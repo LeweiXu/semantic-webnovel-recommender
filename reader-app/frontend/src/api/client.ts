@@ -364,6 +364,7 @@ export const api = {
   uploadTxt: (
     file: File,
     fields: { title: string; author: string; tags: string; synopsis: string; status: string },
+    folder = "", // browse path to upload into; the server keeps it inside uploads/
   ) => {
     const form = new FormData();
     form.append("file", file);
@@ -372,6 +373,7 @@ export const api = {
     form.append("tags", fields.tags);
     form.append("synopsis", fields.synopsis);
     form.append("status", fields.status);
+    form.append("folder", folder);
     return postForm<UploadResult>("/api/upload", form);
   },
   shelf: () => getJSON<ShelfItem[]>("/api/library/shelf"),

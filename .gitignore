@@ -32,3 +32,5 @@ library/
 reports/
 
 CLAUDE.md
+# Local copy of the OneDrive novels folder (source for scripts/epub_to_txt.py).
+/Novels/

@@ -18,7 +18,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from recsys.store import load_category, write_category
 from scripts.repo_paths import UPLOADS_CATEGORY
 from webnovel.library import (
     count_words, join_wrapped_lines, list_library, local_path, read_text_smart,
@@ -27,6 +26,7 @@ from webnovel.library import (
 import admin_jobs
 import annotate
 import auth
+import backup
 import browse
 import chapter_patterns
 import dictionary
@@ -95,6 +95,8 @@ def _warm() -> None:
     # Pay jieba's model load + pypinyin's first-call cost once at startup so the
     # first real chapter isn't slow.
     annotate.tokenize("预热分词与拼音。")
+    # Push anything a restart cut off before its backup timer fired.
+    backup.schedule()
 
 
 def _annotated_tokens(nid: str, idx: int, body: str) -> list[dict]:
@@ -300,26 +302,6 @@ def file_download(path: str = Query(...), _username: str = Depends(current_user)
     return FileResponse(target, filename=target.name)
 
 
-def _resync_upload_record(old_rel: str, new_rel: str | None) -> bool:
-    """Keep uploads/metadata.jsonl in step with a renamed or deleted file.
-
-    Returns whether a record actually pointed at the file. A rename keeps the
-    record's url, which is what reading progress is keyed by, so progress
-    survives; only its shelf id (built from the file name) moves.
-    """
-    records = load_category(UPLOADS_CATEGORY)
-    match = next((r for r in records.values() if r.file == old_rel), None)
-    if match is None:
-        return False
-    if new_rel is None:
-        records.pop(match.url, None)
-    else:
-        match.file = new_rel
-    write_category(UPLOADS_CATEGORY, records)
-    novels.invalidate(match.url)
-    return True
-
-
 @app.post("/api/file/rename", response_model=FileOpOut)
 def file_rename(body: RenameIn, _username: str = Depends(require_admin)) -> FileOpOut:
     """Rename a file in the uploads folder. Admin-only: it edits the library."""
@@ -329,8 +311,9 @@ def file_rename(body: RenameIn, _username: str = Depends(require_admin)) -> File
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Could not rename the file") from exc
-    indexed = _resync_upload_record(body.path, destination)
+    indexed = upload_api.resync_record(body.path, destination)
     novels.invalidate_chapters(body.path, destination)
+    backup.schedule()
     return FileOpOut(ok=True, path=destination, indexed=indexed)
 
 
@@ -343,8 +326,9 @@ def file_delete(path: str = Query(...), _username: str = Depends(require_admin))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Could not delete the file") from exc
-    indexed = _resync_upload_record(path, None)
+    indexed = upload_api.resync_record(path, None)
     novels.invalidate_chapters(path)
+    backup.schedule()
     return FileOpOut(ok=True, path="", indexed=indexed)
 
 
@@ -403,6 +387,7 @@ async def upload_save(
     tags: str = Form(""),  # comma-separated
     synopsis: str = Form(""),
     status: str = Form(""),
+    folder: str = Form(""),  # browse path of the folder to upload into
     _username: str = Depends(current_user),
 ) -> dict:
     _require_txt(file)
@@ -412,7 +397,25 @@ async def upload_save(
         title=title, author=author,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
         synopsis=synopsis, status=status,
+        subdir=_upload_subdir(folder),
     )
+
+
+def _upload_subdir(folder: str) -> str:
+    """The uploads/ subfolder for a browse path; anything outside uploads/ means
+    the uploads root, since that's the only place uploads can go."""
+    if not folder:
+        return ""
+    try:
+        target = browse.safe_join(folder)
+        root = browse.safe_join(UPLOADS_CATEGORY)
+    except ValueError:
+        return ""
+    if target != root and root not in target.parents:
+        return ""
+    if target.exists() and not target.is_dir():
+        raise HTTPException(status_code=400, detail="Upload folder is not a folder")
+    return target.relative_to(root).as_posix() if target != root else ""
 
 
 # ── Novel + chapters ─────────────────────────────────────────────────────────

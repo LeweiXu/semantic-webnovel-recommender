@@ -38,6 +38,15 @@ class StripWatermarkTests(unittest.TestCase):
         self.assertEqual(lines[:2], ["“唉，等下吧。”", "“好的。”"])
         self.assertEqual(lines[-2:], ["梦曦？", "‘怎么出来了？！’"])
 
+    def test_crlf_line_endings_survive(self) -> None:
+        body = ["“唉。”呜", "“好的。”衣", "她答道，奇", "对此，扒", "随后，扒",
+                "白发，霖", "就在此时，气", "神色，⑥", "梦曦？易", "然衣弍零珊尔玲VII斯玐而，"]
+        report = sw.clean((AD + "\n".join(body)).replace("\n", "\r\n"))
+        lines = report["text"].split("\n")
+        self.assertTrue(all(line.endswith("\r") for line in lines[:-1]), lines)
+        self.assertEqual(lines[0], "“唉。”\r")
+        self.assertEqual(lines[-1], "然而，")
+
     def test_ordinary_text_and_emoticons_are_left_alone(self) -> None:
         text = AD + "第一卷 寒冬大森林\n一二三四五，上山打老虎。\n“额⊙_⊙”\n他tm不想继续蹲这里了！"
         report = sw.clean(text)

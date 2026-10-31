@@ -246,7 +246,9 @@ def strip_line_ends(lines: list[str], numbers: list[str]) -> int:
     spans = find_spans(tails, numbers)
     for start, end in spans:
         for n in rows[start:end]:
-            lines[n] = lines[n].rstrip()[:-1]
+            body = lines[n].rstrip()
+            # Keep the line's own ending (a CRLF file's \r lives here).
+            lines[n] = body[:-1] + lines[n][len(body):]
     return len(spans)
 
 

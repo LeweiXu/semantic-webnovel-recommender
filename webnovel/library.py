@@ -383,7 +383,13 @@ def decode_text(raw: bytes) -> str:
     Downloaded 52shuku files are UTF-8, but the browsed/uploaded Windows library
     has GBK/GB2312 Chinese files too. Try UTF-8 (with/without BOM) first, then
     GB18030 (a superset of GBK/GB2312), then give up and replace bad bytes.
+    Windows Notepad's "Unicode" saves are UTF-16 with a BOM, so check that first.
     """
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
             return raw.decode(encoding)

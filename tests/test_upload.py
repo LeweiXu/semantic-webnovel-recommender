@@ -46,6 +46,12 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(meta["chapter_count"], 3)  # front matter + 2 chapters
         self.assertTrue(meta["synopsis"])
 
+    def test_detects_utf16_with_bom(self) -> None:
+        text = "第一章 起\n正文。\n"
+        meta = upload_api.detect("书.txt", text.encode("utf-16"))
+        self.assertEqual(meta["language"], "zh")
+        self.assertEqual(meta["chapter_count"], 1)
+
     def test_detects_english(self) -> None:
         text = "Chapter 1\nHello there world.\nChapter 2\nMore prose here.\n"
         meta = upload_api.detect("A Book.txt", text.encode("utf-8"))

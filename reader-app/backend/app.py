@@ -923,6 +923,12 @@ def download(body: dict, username: str = Depends(current_user)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.delete("/api/download")
+def cancel_download(url: str = Query(...), username: str = Depends(current_user)) -> dict:
+    """Cancel a queued/running download and remove the novel from the shelf."""
+    return {"cancelled": download_manager.cancel(url, username)}
+
+
 @app.get("/api/downloads")
 def downloads(username: str = Depends(current_user)) -> list[dict]:
     return download_manager.snapshot(username)

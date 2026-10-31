@@ -55,20 +55,23 @@ async function saveDoc(item: { id: string; title: string }) {
 }
 
 // A card for a shelf novel whose file isn't here yet. Shows live page progress
-// while downloading, an error with dismiss on failure, or a Download/retry
-// button when there's no active download (e.g. after a reload).
+// while downloading (with a × to cancel it), an error with dismiss on failure,
+// or a Download/retry button when there's no active download (e.g. after a
+// reload).
 function DownloadingCard({
   item,
   title,
   dl,
   onRetry,
   onDismiss,
+  onCancel,
 }: {
   item?: ShelfItem; // full metadata for a shelf-backed download (author, tags, synopsis)
   title?: string; // fallback name when there's no shelf item yet
   dl?: DlState;
   onRetry?: () => void;
   onDismiss?: () => void;
+  onCancel?: () => void; // stop a queued/running download and drop the novel
 }) {
   const running = dl?.status === "queued" || dl?.status === "running";
   const errored = dl?.status === "error";
@@ -115,8 +118,13 @@ function DownloadingCard({
           </div>
         )}
       </div>
-      {!running && onDismiss && (
-        <button className="lib-card-remove" onClick={onDismiss} aria-label="Remove" title="Remove">
+      {(running ? onCancel : onDismiss) && (
+        <button
+          className="lib-card-remove"
+          onClick={running ? onCancel : onDismiss}
+          aria-label={running ? "Cancel download" : "Remove"}
+          title={running ? "Cancel download" : "Remove"}
+        >
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
             <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
@@ -132,6 +140,7 @@ export function LibraryPage() {
   const downloads = useDownloads((s) => s.map);
   const startDownload = useDownloads((s) => s.start);
   const clearDownload = useDownloads((s) => s.clear);
+  const cancelDownload = useDownloads((s) => s.cancel);
 
   const [shelf, setShelf] = useState<ShelfItem[]>(() =>
     user ? readShelfCache(user.username) : [],
@@ -341,6 +350,7 @@ export function LibraryPage() {
                   dl={d}
                   onRetry={() => startDownload(d.url)}
                   onDismiss={() => clearDownload(d.url)}
+                  onCancel={() => void cancelDownload(d.url)}
                 />
               ))}
               {shelf.map((r) => {
@@ -355,6 +365,11 @@ export function LibraryPage() {
                       onDismiss={() => {
                         clearDownload(r.url);
                         removeItem(r);
+                      }}
+                      onCancel={() => {
+                        // The server drops the shelf entry as part of cancelling.
+                        setShelf((cur) => cur.filter((it) => it.id !== r.id));
+                        cancelDownload(r.url).finally(refreshShelf);
                       }}
                     />
                   );

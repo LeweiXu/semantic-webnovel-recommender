@@ -4,8 +4,8 @@ Downloads run here on a background worker, not on the request thread, so they
 keep going when the browser reloads or navigates away. A single worker processes
 the queue one novel at a time (52shuku rate-limits us, so no parallel novels).
 Clients watch progress by polling GET /api/downloads; there's no live connection
-to drop. The only way a download fails is the scraper itself not reaching the
-site.
+to drop. A queued or running download can be cancelled, which also takes the
+novel off the canceller's shelf.
 """
 from __future__ import annotations
 
@@ -13,12 +13,14 @@ import logging
 import queue
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from curl_cffi import requests as cffi_requests
 
-from scraper import fetch, is_novel_landing_url, parse_landing, set_progress_callback
+from scraper import (
+    DownloadCancelled, fetch, is_novel_landing_url, parse_landing, set_progress_callback,
+)
 from webnovel.downloads import download_novel
 
 import novels
@@ -39,12 +41,14 @@ class DownloadState:
     nid: str
     title: str
     username: str
-    status: str = "queued"  # queued | running | done | error
+    status: str = "queued"  # queued | running | done | error | cancelled
     done: int = 0
     total: int = 0
     slug: str | None = None
     error: str | None = None
     finished_at: datetime | None = None
+    # Set by cancel(); the scraper checks it between pages.
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def to_dict(self) -> dict:
         return {
@@ -116,6 +120,22 @@ def enqueue(url: str, username: str) -> dict:
     return state.to_dict()
 
 
+def cancel(url: str, username: str) -> bool:
+    """Stop a queued or running download and take the novel off this user's
+    shelf. Nothing is left on disk: the scraper only writes the .txt once every
+    page is in. Returns whether a download was actually active."""
+    with _lock:
+        state = _states.get(url)
+        active = state is not None and state.status in ("queued", "running")
+        if active:
+            state.cancel_event.set()
+            if state.status == "queued":
+                # Never started, so there's nothing to wait for.
+                del _states[url]
+    user_library.remove(username, nid_encode(url))
+    return active
+
+
 def snapshot(username: str) -> list[dict]:
     """This user's downloads (active + recently finished)."""
     now = datetime.now()
@@ -138,7 +158,8 @@ def _worker_loop() -> None:
     while True:
         url = _queue.get()  # block until there's work; the thread lives for the process
         state = _states.get(url)
-        if state is not None:
+        # Skip urls that were cancelled (or already run) while waiting in line.
+        if state is not None and state.status == "queued":
             _run(state)
 
 
@@ -159,7 +180,9 @@ def _run(state: DownloadState) -> None:
 
     set_progress_callback(page_progress)
     try:
-        code, novel = download_novel(state.url, event_callback=messages.append)
+        code, novel = download_novel(
+            state.url, event_callback=messages.append, cancel=state.cancel_event,
+        )
         if code != 0 and novel is None:
             state.status = "error"
             state.error = messages[-1] if messages else "Download failed."
@@ -172,6 +195,12 @@ def _run(state: DownloadState) -> None:
                 state.total = state.done = len(novels.chapters_for(state.url, record))
             state.title = record.title if record else state.title
             state.status = "done"
+    except DownloadCancelled:
+        # cancel() already took it off the shelf; just forget the job.
+        with _lock:
+            if _states.get(state.url) is state:
+                del _states[state.url]
+        state.status = "cancelled"
     except Exception as exc:  # noqa: BLE001 - surface any failure to the poller
         state.status = "error"
         state.error = str(exc)

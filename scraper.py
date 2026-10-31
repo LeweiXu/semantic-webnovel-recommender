@@ -179,6 +179,10 @@ def _classify(resp, exc) -> str:
 
 # ── HTTP fetch with retry/backoff ──────────────────────────────────────────────
 
+class DownloadCancelled(Exception):
+    """scrape_novel was told to stop (its cancel event was set) mid-download."""
+
+
 class PageNotFound(FileNotFoundError):
     """52shuku answered 404. A subclass of FileNotFoundError so older handlers
     still catch it, but callers that mark a novel "not_found" should catch this
@@ -854,10 +858,13 @@ def _fetch_pages(
     chapter_urls: list[str],
     workers: int,
     verbose: bool,
+    cancel: threading.Event | None = None,
 ) -> tuple[list[str], list[str]]:
     """Fetch all chapter pages.
 
     Returns (page_texts_in_order, failed_page_urls, page_has_br_in_order).
+    Raises DownloadCancelled as soon as `cancel` is set: pages not started yet
+    are dropped, so only the ones already in flight finish.
     """
     total = len(chapter_urls)
     w = len(str(total))
@@ -903,6 +910,8 @@ def _fetch_pages(
 
     if workers == 1:
         for i, url in enumerate(chapter_urls):
+            if cancel is not None and cancel.is_set():
+                raise DownloadCancelled(chapter_urls[0])
             if i > 0:
                 time.sleep(DELAY_CHAPTER + random.uniform(0, DELAY_CHAPTER_JITTER))
             try:
@@ -914,6 +923,10 @@ def _fetch_pages(
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_do_fetch, url): i for i, url in enumerate(chapter_urls)}
             for fut in as_completed(futures):
+                if cancel is not None and cancel.is_set():
+                    for pending in futures:
+                        pending.cancel()
+                    raise DownloadCancelled(chapter_urls[0])
                 i = futures[fut]
                 try:
                     text, br, fetch_ms, parse_ms = fut.result()
@@ -975,12 +988,15 @@ def scrape_novel(
     verbose: bool = False,
     month_subdir: bool = True,
     force: bool = False,
+    cancel: threading.Event | None = None,
 ) -> ScrapedNovel | None:
     """Fetch landing page + all pages, write .txt.
 
     month_subdir: place the file under output_dir/YYYY-MM/ (the catalogue layout).
                   When False, write directly into output_dir (one-off downloads).
     force:        re-download even if the output file already exists.
+    cancel:       set it to stop mid-download (raises DownloadCancelled, and
+                  nothing is written).
 
     Returns ScrapedNovel on success/skip, None on unrecoverable failure.
     Raises PageNotFound if the landing page 404s (deleted novel / chain gap).
@@ -1034,7 +1050,9 @@ def scrape_novel(
 
     total = len(meta.chapter_urls)
     log.info("Scraping '%s' — %d pages  (workers=%d)", meta.title, total, workers)
-    pages, failed_pages, page_has_br = _fetch_pages(session, meta.chapter_urls, workers, verbose)
+    pages, failed_pages, page_has_br = _fetch_pages(
+        session, meta.chapter_urls, workers, verbose, cancel=cancel,
+    )
 
     chapters = split_into_chapters(pages)
     chapter_count = sum(1 for h, _ in chapters if h is not None)

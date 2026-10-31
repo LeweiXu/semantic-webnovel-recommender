@@ -102,7 +102,10 @@ def download_novel(
     force: bool = False,
     verbose: bool = False,
     event_callback=None,
+    cancel=None,
 ) -> tuple[int, object | None]:
+    """Download one novel. `cancel` (a threading.Event) stops it mid-way by
+    raising scraper.DownloadCancelled."""
     emit = event_callback or print
     if not is_novel_landing_url(url):
         emit(f"Unsupported novel URL: {url}")
@@ -117,6 +120,7 @@ def download_novel(
             workers=workers,
             verbose=verbose,
             force=force,
+            cancel=cancel,
         )
     except PageNotFound:
         category = category_of_url(url) or "gl"

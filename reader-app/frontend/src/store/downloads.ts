@@ -11,6 +11,7 @@ interface DownloadsStore {
   init: () => void; // begin mirroring (call on login / app load)
   poll: () => Promise<void>;
   clear: (url: string) => void;
+  cancel: (url: string) => Promise<void>; // stop it server-side, then forget it
 }
 
 let timer: number | null = null;
@@ -68,5 +69,13 @@ export const useDownloads = create<DownloadsStore>((set, get) => {
         delete map[url];
         return { map };
       }),
+    cancel: async (url) => {
+      get().clear(url); // optimistic: the card goes away right away
+      try {
+        await api.cancelDownload(url);
+      } finally {
+        void get().poll();
+      }
+    },
   };
 });

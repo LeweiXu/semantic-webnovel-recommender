@@ -356,6 +356,9 @@ export const api = {
     getJSON<BrowseListing>(`/api/browse?path=${encodeURIComponent(path)}`),
   startDownload: (url: string) => postJSON<DownloadDTO>("/api/download", { url }),
   downloads: () => getJSON<DownloadDTO[]>("/api/downloads"),
+  // Stops a queued/running download and takes the novel off the shelf.
+  cancelDownload: (url: string) =>
+    deleteJSON<{ cancelled: boolean }>(`/api/download?url=${encodeURIComponent(url)}`),
   detectUpload: (file: File) => {
     const form = new FormData();
     form.append("file", file);

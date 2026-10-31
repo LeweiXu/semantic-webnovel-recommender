@@ -99,6 +99,64 @@ class DownloadManagerTests(unittest.TestCase):
             download_manager._states.clear()
 
 
+class CancelTests(unittest.TestCase):
+    def setUp(self) -> None:
+        download_manager._states.clear()
+        self.addCleanup(download_manager._states.clear)
+
+    def test_cancel_running_download_stops_it_and_unshelves(self) -> None:
+        state = download_manager.DownloadState(url=URL, nid="nid1", title="x", username="tester")
+        download_manager._states[URL] = state
+
+        def fake_download(url, cancel, **_kwargs):
+            # The real scraper checks the event between pages.
+            download_manager.cancel(url, "tester")
+            self.assertTrue(cancel.is_set())
+            raise scraper.DownloadCancelled(url)
+
+        with patch.object(download_manager, "download_novel", fake_download), \
+             patch.object(user_library, "remove") as remove:
+            state.status = "queued"
+            download_manager._run(state)
+        self.assertEqual(state.status, "cancelled")
+        self.assertNotIn(URL, download_manager._states)
+        remove.assert_called_once()
+
+    def test_cancel_queued_download_never_runs(self) -> None:
+        state = download_manager.DownloadState(url=URL, nid="nid1", title="x", username="tester")
+        download_manager._states[URL] = state
+        with patch.object(user_library, "remove"):
+            self.assertTrue(download_manager.cancel(URL, "tester"))
+        self.assertNotIn(URL, download_manager._states)
+
+    def test_page_loop_stops_when_cancelled(self) -> None:
+        import threading
+
+        cancel = threading.Event()
+        fetched: list[str] = []
+
+        def fake_fetch(_session, url, **_kwargs):
+            fetched.append(url)
+            cancel.set()  # cancel right after the first page
+            return SimpleNamespace(text="<div id='text'>x</div>")
+
+        urls = [f"https://www.52shuku.net/wuxia/a_{n}.html" for n in range(2, 12)]
+        with patch.object(scraper, "fetch", fake_fetch), \
+             patch.object(scraper, "DELAY_CHAPTER", 0), \
+             patch.object(scraper, "DELAY_CHAPTER_JITTER", 0):
+            with self.assertRaises(scraper.DownloadCancelled):
+                scraper._fetch_pages(None, urls, workers=1, verbose=False, cancel=cancel)
+        self.assertEqual(len(fetched), 1)
+
+        # Threaded path (what the app uses): queued pages are dropped too, so
+        # at most the ones already in flight get fetched.
+        cancel.clear()
+        fetched.clear()
+        with patch.object(scraper, "fetch", fake_fetch):
+            with self.assertRaises(scraper.DownloadCancelled):
+                scraper._fetch_pages(None, urls * 10, workers=2, verbose=False, cancel=cancel)
+        self.assertLess(len(fetched), 10)
+
 class NotFoundTests(unittest.TestCase):
     def test_month_dir_creates_missing_category_folder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

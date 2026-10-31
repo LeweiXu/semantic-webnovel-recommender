@@ -34,6 +34,7 @@ import download
 import read
 import report
 import scrape_metadata
+import scripts.epub_to_txt as epub_to_txt
 import scripts.tts as tts
 
 
@@ -654,6 +655,28 @@ class UserSettingsTests(unittest.TestCase):
                 user_settings.get("carol"),
                 {"desktop": {"contrast": 110}, "mobile": {}},
             )
+
+
+class EpubToTxtTests(unittest.TestCase):
+    def test_convert_writes_sibling_txt_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Series").mkdir()
+            TtsTests._write_epub(self, root / "Series" / "book.epub")
+            with redirect_stderr(StringIO()):
+                self.assertEqual(epub_to_txt.convert(root), 0)
+            txt = root / "Series" / "book.txt"
+            self.assertIn("Hello world.", txt.read_text(encoding="utf-8"))
+            txt.write_text("kept", encoding="utf-8")
+            with redirect_stderr(StringIO()):
+                epub_to_txt.convert(root)  # existing .txt is left alone
+            self.assertEqual(txt.read_text(encoding="utf-8"), "kept")
+
+    def test_name_keys_match_across_tags_and_author_tails(self) -> None:
+        self.assertTrue(epub_to_txt.name_keys("公主病_鱼霜【完结-番外】") & epub_to_txt.name_keys("公主病"))
+        self.assertTrue(epub_to_txt.name_keys("《上古》全集(zei8.com)") & epub_to_txt.name_keys("上古全集"))
+        self.assertTrue(epub_to_txt.name_keys("Gamers! Volume 1") & epub_to_txt.name_keys("gamers volume 1"))
+        self.assertFalse(epub_to_txt.name_keys("Gamers! Volume 1") & epub_to_txt.name_keys("Gamers! Volume 2"))
 
 
 class TtsTests(unittest.TestCase):

@@ -81,6 +81,11 @@ export default function App() {
         if (window.location.pathname !== canonical) writeUrl(canonical);
       } else if (route.page === "library") {
         setView("library");
+      } else if (window.location.pathname === "/" && useAuth.getState().user) {
+        // The bare site URL lands logged-in readers on their library; everyone
+        // else (and any explicit /discover link) gets Discover.
+        setView("library");
+        writeUrl(libraryPath());
       } else {
         setView("discover");
         if (window.location.pathname !== "/discover") writeUrl(discoverPath(route));

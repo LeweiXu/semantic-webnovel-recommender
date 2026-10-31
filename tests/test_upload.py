@@ -129,6 +129,18 @@ class MoveTests(unittest.TestCase):
                 record = store.load_category("uploads")[saved["url"]]
                 self.assertEqual(record.file, "uploads/New/Shelf/Book.txt")
 
+    def test_move_plan_can_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "uploads" / "Old").mkdir(parents=True)
+            (root / "uploads" / "Old" / "123.txt").write_text("x", encoding="utf-8")
+            plan = root / "plan.json"
+            plan.write_text(json.dumps({"Old/123.txt": "GL/真名.txt"}), encoding="utf-8")
+            a, b, c = _library(root)
+            with a, b, c:
+                self.assertEqual(upload_api._cli_move(plan), ["GL/真名.txt"])
+            self.assertTrue((root / "uploads" / "GL" / "真名.txt").exists())
+
 
 class BackupTests(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> str:

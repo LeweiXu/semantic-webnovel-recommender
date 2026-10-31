@@ -224,7 +224,9 @@ def _cli_import(staging: Path) -> list[dict]:
 
 
 def _cli_move(plan_path: Path) -> list[str]:
-    """Apply {"<old path under uploads/>": "<new folder under uploads/>"}."""
+    """Apply {"<old path under uploads/>": "<new folder>" or "<new folder>/<name>.txt"}.
+
+    A destination ending in .txt renames the file as well as moving it."""
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     root = category_dir(UPLOADS_CATEGORY)
     moved = []
@@ -233,8 +235,12 @@ def _cli_move(plan_path: Path) -> list[str]:
         if not source.is_file():
             print(f"skip (missing): {old}", file=sys.stderr)
             continue
+        name = source.name
+        if folder.lower().endswith(".txt"):
+            folder, _, name = folder.rpartition("/")
+            name = _safe_filename(name)
         folder = safe_subdir(folder)
-        dest = (root / folder if folder else root) / source.name
+        dest = (root / folder if folder else root) / name
         if dest == source:
             continue
         if dest.exists():

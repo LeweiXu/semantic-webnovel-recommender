@@ -20,6 +20,7 @@ from webnovel.downloads import catalogue_urls
 from webnovel.library import (
     MAX_CHAPTER_CHARS,
     count_words,
+    is_section_title,
     join_wrapped_lines,
     Chapter,
     chapter_number,
@@ -222,13 +223,21 @@ Second body
         titles = [chapter.title for chapter in chapters]
         self.assertIn("第16章 Sixteen", titles)
         self.assertIn("第17章 Seventeen", titles)
-        # The front matter above 第16章 held chapters 1-15, so it was split.
-        self.assertGreater(sum(1 for t in titles if t.startswith("Front matter")), 1, titles)
-        front = [c for c in chapters if c.title.startswith("Front matter")]
+        # The front matter above 第16章 held chapters 1-15, so it was split
+        # into numbered sections rather than "Front matter (n)".
+        self.assertNotIn("Front matter", titles)
+        front = [c for c in chapters if is_section_title(c.title)]
+        self.assertGreater(len(front), 1, titles)
+        self.assertEqual(front[0].title, "第1节")
         self.assertBoundedParts(front, source)
         # The two real chapters are untouched.
         self.assertEqual(titles.count("第16章 Sixteen"), 1)
         self.assertEqual(titles.count("第17章 Seventeen"), 1)
+
+    def test_unmarked_chinese_book_gets_numbered_sections(self) -> None:
+        chapters = chapters_from_text("\n\n".join("没有章节标题的正文" * 200 for _ in range(30)))
+        self.assertGreater(len(chapters), 1)
+        self.assertEqual([c.title for c in chapters[:2]], ["第1节", "第2节"])
 
     def test_long_chapter_without_a_numbering_gap_is_left_whole(self) -> None:
         # The point of using numbering rather than length: consecutive ordinals

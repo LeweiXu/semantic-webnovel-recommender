@@ -207,6 +207,22 @@ def _holds_multiple(chapter: Chapter, typical: int) -> bool:
     return len(chapter.body) >= max(typical, MAX_CHAPTER_CHARS) * FUSED_LENGTH_FACTOR
 
 
+_SECTION_TITLE = re.compile(r"^(第\d+节|Part \d+)$")
+
+
+def section_title(order: int, sample: str, width: int = 0) -> str:
+    """Title for a generated (not detected) chapter: 第n节, or "Part n" when
+    the book is English, where a Chinese label would look out of place."""
+    if detect_language(sample[:2000]) == "en":
+        return f"Part {order:0{width}d}"
+    return f"第{order}节"
+
+
+def is_section_title(title: str) -> bool:
+    """True for titles section_title() made, i.e. not a heading from the text."""
+    return _SECTION_TITLE.match(title) is not None
+
+
 def _split_fused(chapters: list[Chapter], limit: int = MAX_CHAPTER_CHARS) -> list[Chapter]:
     """Cut fused chapters into bounded parts, leaving every real chapter alone.
 
@@ -223,6 +239,14 @@ def _split_fused(chapters: list[Chapter], limit: int = MAX_CHAPTER_CHARS) -> lis
             split.append(chapter)
             continue
         blocks = _text_blocks(chapter.body, limit)
+        if chapter.title == "Front matter":
+            # A front matter big enough to split is really the start of a book
+            # whose headings weren't found, not front matter: number its parts.
+            split.extend(
+                Chapter(section_title(order, chapter.body), block)
+                for order, block in enumerate(blocks, 1)
+            )
+            continue
         split.extend(
             Chapter(chapter.title if order == 1 else f"{chapter.title} ({order})", block)
             for order, block in enumerate(blocks, 1)
@@ -238,7 +262,7 @@ def fallback_chapters(
     blocks = _text_blocks(text, limit)
     width = max(2, len(str(len(blocks))))
     return [
-        Chapter(f"Part {index:0{width}d}", block)
+        Chapter(section_title(index, text, width), block)
         for index, block in enumerate(blocks, 1)
     ]
 

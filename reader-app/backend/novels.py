@@ -13,7 +13,7 @@ from pathlib import Path
 
 from recsys.store import NovelRecord, load_all
 from webnovel.library import (
-    Chapter, detect_language, local_chapters, local_path, local_synopsis,
+    Chapter, detect_language, is_section_title, local_chapters, local_path, local_synopsis,
     raw_chapters, read_text_smart,
 )
 from scripts.repo_paths import store_dirs
@@ -176,7 +176,7 @@ def resolve(url: str) -> ResolvedNovel | None:
     synopsis = trim_synopsis_at_first_chapter(synopsis, chapters)
     # 52shuku novels are all Chinese; an uploaded novel might be English, so
     # detect its language from the text to drive pinyin on/off. Sample bodies
-    # only, since a generated "Front matter"/"Part" title would skew a sample.
+    # only, since a generated "Front matter"/"第n节" title would skew a sample.
     language = "zh"
     if record.category == "uploads":
         language = detect_language("".join(ch.body for ch in chapters[:3])[:2000])
@@ -257,7 +257,7 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
 def _chapter_mode(chapters: list[Chapter]) -> str:
     return (
         "fallback"
-        if chapters and all(chapter.title.startswith("Part ") for chapter in chapters)
+        if chapters and all(is_section_title(chapter.title) for chapter in chapters)
         else "detected"
     )
 

@@ -170,7 +170,8 @@ def upload(root: Path, plan_path: Path, dry_run: bool) -> int:
         subprocess.run(["ssh", SERVER, f"rm -rf {STAGING} && mkdir -p {STAGING}"], check=True)
         subprocess.run(["rsync", "-az", f"{staging}/", f"{SERVER}:{STAGING}/"], check=True)
     try:
-        saved = json.loads(_remote(f"import {STAGING}"))
+        # _remote runs from inside DEST, so the staging path is relative to it.
+        saved = json.loads(_remote(f"import {STAGING.removeprefix(DEST + '/')}"))
     finally:
         subprocess.run(["ssh", SERVER, f"rm -rf {STAGING}"], check=False)
     print(f"saved {len(saved)} books", file=sys.stderr)

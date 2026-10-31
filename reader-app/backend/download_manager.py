@@ -9,6 +9,7 @@ site.
 """
 from __future__ import annotations
 
+import logging
 import queue
 import re
 import threading
@@ -57,6 +58,8 @@ class DownloadState:
             "error": self.error,
         }
 
+
+log = logging.getLogger("novel.downloads")
 
 _states: dict[str, DownloadState] = {}
 _queue: "queue.Queue[str]" = queue.Queue()
@@ -150,12 +153,17 @@ def _run(state: DownloadState) -> None:
             state.done = int(match.group(1))
             state.total = int(match.group(2))
 
+    # Keep the scraper's last message so a failure says what actually went
+    # wrong ("Novel does not exist (404)", "Unsupported novel URL", …).
+    messages: list[str] = []
+
     set_progress_callback(page_progress)
     try:
-        code, novel = download_novel(state.url, event_callback=lambda _m: None)
+        code, novel = download_novel(state.url, event_callback=messages.append)
         if code != 0 and novel is None:
             state.status = "error"
-            state.error = "Download failed; the scraper couldn't reach 52shuku."
+            state.error = messages[-1] if messages else "Download failed."
+            log.warning("download failed: %s: %s", state.url, state.error)
         else:
             novels.invalidate(state.url)
             record = novels.record_for_url(state.url)

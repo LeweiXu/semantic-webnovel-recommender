@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from scraper import (  # noqa: E402
-    IMPERSONATE, REQUEST_TIMEOUT, fetch, is_novel_landing_url,
+    IMPERSONATE, REQUEST_TIMEOUT, PageNotFound, fetch, is_novel_landing_url,
     parse_chapter_page, parse_landing,
 )
 from repo_paths import CATEGORIES  # noqa: E402
@@ -101,7 +101,7 @@ class FetchResult:
 def _fetch_landing(session, url: str, categories: set[str], pages: int) -> FetchResult:
     try:
         resp = fetch(session, url)
-    except FileNotFoundError:
+    except PageNotFound:
         return FetchResult(url, "not_found")
     except Exception:
         return FetchResult(url, "error")

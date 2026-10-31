@@ -52,6 +52,18 @@ class DownloadManagerTests(unittest.TestCase):
         self.assertEqual(state.status, "error")
         self.assertIsNotNone(state.error)
 
+    def test_failure_shows_the_scrapers_own_message(self) -> None:
+        state = download_manager.DownloadState(url=URL, nid="nid1", title="x", username="tester")
+
+        def fake_download(url, event_callback, **_kwargs):
+            event_callback(f"Novel does not exist (404): {url}")
+            return 1, None
+
+        with patch.object(download_manager, "download_novel", fake_download):
+            download_manager._run(state)
+        self.assertEqual(state.error, f"Novel does not exist (404): {URL}")
+
+
     def test_enqueue_adds_to_shelf_and_dedupes(self) -> None:
         record = SimpleNamespace(title="标题", downloaded=False)
         with tempfile.TemporaryDirectory() as directory, \
@@ -85,6 +97,41 @@ class DownloadManagerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 download_manager.enqueue("https://www.52shuku.net/yanqing/99_b/over.html", "carol")
             download_manager._states.clear()
+
+
+class NotFoundTests(unittest.TestCase):
+    def test_month_dir_creates_missing_category_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "52shuku" / "wuxia"  # never created
+            month = scraper.upload_month_dir("2021年08月03日", base)
+            self.assertTrue(month.is_dir())
+            self.assertEqual(month.name, "2021-08")
+
+    def test_local_file_error_is_not_mistaken_for_a_404(self) -> None:
+        from webnovel import downloads
+
+        def local_error(*_args, **_kwargs):
+            raise FileNotFoundError("[Errno 2] No such file or directory: 'library/x'")
+
+        with patch.object(downloads, "scrape_novel", local_error), \
+             patch.object(downloads, "write_catalog") as write_catalog:
+            with self.assertRaises(FileNotFoundError):
+                downloads.download_novel(URL, event_callback=lambda _m: None)
+            write_catalog.assert_not_called()  # no bogus "not_found" entry
+
+    def test_real_404_is_still_recorded_as_not_found(self) -> None:
+        from webnovel import downloads
+
+        def gone(*_args, **_kwargs):
+            raise scraper.PageNotFound(f"404: {URL}")
+
+        with patch.object(downloads, "scrape_novel", gone), \
+             patch.object(downloads, "load_catalog", return_value={}), \
+             patch.object(downloads, "write_catalog") as write_catalog:
+            code, novel = downloads.download_novel(URL, event_callback=lambda _m: None)
+        self.assertEqual((code, novel), (1, None))
+        saved = write_catalog.call_args.args[1]
+        self.assertEqual(saved[URL].fetch_status, "not_found")
 
 
 if __name__ == "__main__":

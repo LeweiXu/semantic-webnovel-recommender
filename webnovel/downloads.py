@@ -17,6 +17,7 @@ from recsys.routes import open_windscribe_routes
 from recsys.store import load_category, upsert_category
 from scraper import (
     DELAY_NOVEL,
+    PageNotFound,
     DELAY_NOVEL_JITTER,
     INCOMPLETE_LOG,
     category_dir_for_url,
@@ -117,7 +118,7 @@ def download_novel(
             verbose=verbose,
             force=force,
         )
-    except FileNotFoundError:
+    except PageNotFound:
         category = category_of_url(url) or "gl"
         catalog = load_catalog(category)
         catalog[url] = CatalogRecord(url, category, "not_found")
@@ -204,7 +205,7 @@ def _process_queue(
                     novel = scrape_novel(
                         session, url, output_dir, workers=workers, verbose=verbose
                     )
-            except FileNotFoundError:
+            except PageNotFound:
                 category = category_of_url(url) or "gl"
                 with _STORE_LOCK:
                     catalog = load_catalog(category)

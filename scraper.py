@@ -179,6 +179,12 @@ def _classify(resp, exc) -> str:
 
 # ── HTTP fetch with retry/backoff ──────────────────────────────────────────────
 
+class PageNotFound(FileNotFoundError):
+    """52shuku answered 404. A subclass of FileNotFoundError so older handlers
+    still catch it, but callers that mark a novel "not_found" should catch this
+    one: a plain FileNotFoundError can also be a local path problem."""
+
+
 def fetch(
     session: cffi_requests.Session,
     url: str,
@@ -187,7 +193,7 @@ def fetch(
 ) -> cffi_requests.Response:
     """Fetch url with exponential backoff on CHALLENGED/ERROR.
 
-    Raises FileNotFoundError on 404, RuntimeError after max_retries exhausted.
+    Raises PageNotFound on 404, RuntimeError after max_retries exhausted.
     """
     for attempt in range(max_retries):
         resp = exc = None
@@ -200,7 +206,7 @@ def fetch(
         if verdict == OK:
             return resp
         if verdict == NOT_FOUND:
-            raise FileNotFoundError(f"404: {url}")
+            raise PageNotFound(f"404: {url}")
         if attempt + 1 == max_retries:
             break
 
@@ -549,7 +555,8 @@ def upload_month_dir(upload_date: str, base: Path) -> Path:
     m = _UPLOAD_DATE_RE.search(upload_date)
     subdir = f"{m.group(1)}-{m.group(2)}" if m else "unknown"
     d = base / subdir
-    d.mkdir(exist_ok=True)
+    # parents=True: the first download into a category creates its folder too.
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -946,7 +953,7 @@ def rebuild_chapter_urls(
         candidate = f"{url_stem}_{n}.html"
         try:
             fetch(session, candidate)
-        except FileNotFoundError:
+        except PageNotFound:
             consecutive_missing += 1
         except RuntimeError as exc:
             # Couldn't get a definitive verdict (server hung up after retries);
@@ -976,7 +983,7 @@ def scrape_novel(
     force:        re-download even if the output file already exists.
 
     Returns ScrapedNovel on success/skip, None on unrecoverable failure.
-    Raises FileNotFoundError if the landing page 404s (deleted novel / chain gap).
+    Raises PageNotFound if the landing page 404s (deleted novel / chain gap).
     """
     try:
         resp = fetch(session, url)

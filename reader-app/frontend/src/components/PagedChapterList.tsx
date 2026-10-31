@@ -48,26 +48,10 @@ export function PagedChapterList({
       ?.scrollIntoView({ block: "center" });
   }, [revealCurrent, current, safePage]);
 
-  return (
-    <>
-      <ul ref={list} className={`toc-list${className ? ` ${className}` : ""}`}>
-        {visible.map((chapter) => (
-          <li key={chapter.index}>
-            <button
-              className={`toc-row${chapter.index === current ? " is-active" : ""}`}
-              onClick={() => onSelect(chapter.index)}
-            >
-              <span className="toc-ord">{String(chapter.index + 1).padStart(2, "0")}</span>
-              <span className="toc-title">{chapter.title}</span>
-              {showWords && chapter.words > 0 && (
-                <span className="toc-words">{formatCount(chapter.words)}</span>
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {pages > 1 && (
-        <nav className="chapter-pages" aria-label="Chapter list pages">
+  // Same pager above and below the list, so long pages don't need a scroll to
+  // the bottom just to move on.
+  const pager = (where: "top" | "bottom") => pages > 1 && (
+        <nav className={`chapter-pages is-${where}`} aria-label="Chapter list pages">
           <button
             className="btn-outline"
             disabled={safePage === 0}
@@ -88,7 +72,28 @@ export function PagedChapterList({
             Next
           </button>
         </nav>
-      )}
+  );
+
+  return (
+    <>
+      {pager("top")}
+      <ul ref={list} className={`toc-list${className ? ` ${className}` : ""}`}>
+        {visible.map((chapter) => (
+          <li key={chapter.index}>
+            <button
+              className={`toc-row${chapter.index === current ? " is-active" : ""}`}
+              onClick={() => onSelect(chapter.index)}
+            >
+              <span className="toc-ord">{String(chapter.index + 1).padStart(2, "0")}</span>
+              <span className="toc-title">{chapter.title}</span>
+              {showWords && chapter.words > 0 && (
+                <span className="toc-words">{formatCount(chapter.words)}</span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {pager("bottom")}
     </>
   );
 }

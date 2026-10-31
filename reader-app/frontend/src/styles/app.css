@@ -409,12 +409,20 @@ button {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* Chapters as a horizontally-ordered 3-column grid on desktop. */
+/* Chapters as a horizontally-ordered grid: 1 column on phones, 2 on mid-size
+   screens, 3 on wide ones. The page is 2/3 of the viewport, so these keep each
+   column at roughly 230px or more. */
 .novel-page-toc {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px 14px;
+}
+@media (min-width: 700px) {
+  .novel-page-toc { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .novel-page-toc { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .novel-page-toc .toc-row { min-width: 0; }
 .novel-page-toc .toc-title {
@@ -433,6 +441,7 @@ button {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
+.chapter-pages.is-top { margin: 4px 0 8px; }
 .chapter-pages .btn-outline {
   width: auto;
   padding: 6px 10px;

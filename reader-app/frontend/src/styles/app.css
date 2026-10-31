@@ -326,12 +326,13 @@ button {
 
 /* ── Novel landing page (title / tags / synopsis / chapters) ─────────────────
    Statically designed to match the Discover/Library pages (UI font, fixed
-   sizes). It does NOT use the reader's per-user typography settings. Desktop
-   takes two-thirds of the width, centered; mobile widens it (responsive.css). */
+   sizes). It does NOT use the reader's per-user typography settings. It uses
+   the same frame as .discover and .library, so moving between the three pages
+   doesn't shift the content edges. */
 .novel-page {
-  width: 66.6667%;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 32px 0 30vh;
+  padding: 30px 22px 16vh;
 }
 .novel-page-hero {
   padding-bottom: 20px;

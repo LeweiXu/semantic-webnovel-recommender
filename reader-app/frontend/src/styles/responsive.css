@@ -16,13 +16,4 @@
   .lib-card-synopsis {
     display: none;
   }
-
-  /* Novel page: full width with side padding, single-column chapter list. */
-  .novel-page {
-    width: auto;
-    padding: 24px 18px 30vh;
-  }
-  .novel-page-toc {
-    grid-template-columns: 1fr;
-  }
 }

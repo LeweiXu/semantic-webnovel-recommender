@@ -178,6 +178,30 @@ class ResolvePathTests(unittest.TestCase):
                     ["1重生", "2归来", "3终章"],
                 )
 
+    def test_sections_mode_ignores_headings_and_can_be_undone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            pattern_path = root / "patterns.json"
+            book = root / "book.txt"
+            book.write_text("第一章 甲\n内容\n第二章 乙\n内容2", encoding="utf-8")
+            with patch.object(browse, "BROWSE_DIR", root), patch.object(
+                chapter_patterns, "PATTERNS_PATH", pattern_path
+            ):
+                chapter_patterns.set_pattern("book.txt", r"^第.章.*$", ["第一章 甲"])
+                chapter_patterns.set_sections("book.txt")
+                novels.invalidate("book.txt")
+                sections = novels.resolve_path("book.txt")
+                self.assertEqual(sections.chapter_mode, "sections")
+                self.assertEqual([c.title for c in sections.chapters], ["第1节"])
+                # The regex is replaced, but its examples are kept for later.
+                self.assertIsNone(chapter_patterns.get("book.txt"))
+                self.assertEqual(chapter_patterns.get_examples("book.txt"), ["第一章 甲"])
+
+                chapter_patterns.remove("book.txt")
+                novels.invalidate("book.txt")
+                restored = novels.resolve_path("book.txt")
+                self.assertEqual([c.title for c in restored.chapters], ["第一章 甲", "第二章 乙"])
+
     def test_first_chapter_is_removed_from_malformed_synopsis(self) -> None:
         from webnovel.library import Chapter
 

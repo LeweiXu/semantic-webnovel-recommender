@@ -105,7 +105,7 @@ export interface NovelDetail {
   chapters: ChapterStub[];
   kind: string; // "novel" | "text"
   language: string; // "zh" | "en"
-  chapter_mode: "detected" | "fallback" | "custom";
+  chapter_mode: "detected" | "fallback" | "custom" | "sections";
   chapter_pattern: string | null;
   chapter_examples: string[];
   download_path: string | null; // source .txt, when it can be downloaded
@@ -431,6 +431,10 @@ export const api = {
       `/api/novel/${encodeId(nid)}/chapter-pattern`,
       { pattern, sample },
     ),
+  // Ignore headings for this book and show it as 第n节 sections. Undone by
+  // deleteChapterPattern, the same as a custom regex.
+  setChapterSections: (nid: string) =>
+    putJSON<ChapterPatternResult>(`/api/novel/${encodeId(nid)}/chapter-sections`, {}),
   deleteChapterPattern: (nid: string) =>
     deleteJSON<ChapterPatternResult>(
       `/api/novel/${encodeId(nid)}/chapter-pattern`,

@@ -74,6 +74,24 @@ def get(book_key: str) -> str | None:
         return None
 
 
+def sections_only(book_key: str) -> bool:
+    """True when this book skips heading detection and is just cut into 第n节."""
+    with _lock:
+        value = _load()["books"].get(book_key)
+    return isinstance(value, dict) and value.get("mode") == "sections"
+
+
+def set_sections(book_key: str) -> None:
+    """Ignore chapter headings for this book. Replaces any custom regex, but
+    keeps its heading examples so switching back doesn't lose them."""
+    with _lock:
+        data = _load()
+        existing = data["books"].get(book_key)
+        examples = existing.get("examples", []) if isinstance(existing, dict) else []
+        data["books"][book_key] = {"mode": "sections", "examples": examples}
+        _save(data)
+
+
 def get_examples(book_key: str) -> list[str]:
     """Return saved heading examples, while accepting legacy string entries."""
     with _lock:

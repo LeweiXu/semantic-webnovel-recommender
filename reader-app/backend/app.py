@@ -562,6 +562,23 @@ def save_chapter_pattern(
     return result
 
 
+@app.put(
+    "/api/novel/{nid:path}/chapter-sections",
+    response_model=ChapterPatternOut,
+)
+def use_chapter_sections(
+    nid: str,
+    _username: str = Depends(current_user),
+) -> ChapterPatternOut:
+    """Ignore chapter headings for this book and show it as 第n节 sections.
+    Undone by the DELETE on /chapter-pattern, like a custom regex."""
+    resolved = _resolve_or_404(nid)
+    chapter_patterns.set_sections(resolved.url)
+    novels.invalidate(resolved.url)
+    refreshed = _resolve_or_404(nid)
+    return ChapterPatternOut(pattern="", matches=0, chapters=len(refreshed.chapters))
+
+
 @app.delete(
     "/api/novel/{nid:path}/chapter-pattern",
     response_model=ChapterPatternOut,

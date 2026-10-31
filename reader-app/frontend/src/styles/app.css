@@ -849,6 +849,12 @@ rt.rt-hidden {
   padding: 8px 2px;
   font-size: 0.75rem;
 }
+.chapter-pattern-sections {
+  margin-top: 16px;
+  padding-top: 4px;
+  border-top: 1px solid var(--hairline);
+}
+.chapter-pattern-sections .chapter-pattern-note { margin: 10px 0; }
 .chapter-pattern-preview {
   margin-top: 14px;
   border: 1px solid var(--hairline);

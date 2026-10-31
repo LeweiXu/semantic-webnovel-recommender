@@ -319,7 +319,11 @@ export function SettingsPanel() {
           <label className="setting-label">
             Book structure
             <span className="setting-value">
-              {novel.chapter_pattern ? "Custom" : novel.chapter_mode}
+              {novel.chapter_pattern
+                ? "Custom"
+                : novel.chapter_mode === "sections"
+                  ? "第n节"
+                  : novel.chapter_mode}
             </span>
           </label>
           <button className="btn-outline" onClick={openChapterPattern}>

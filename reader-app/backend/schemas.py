@@ -112,7 +112,7 @@ class NovelDetail(BaseModel):
     chapters: list[ChapterStub]
     kind: str = "novel"  # "novel" = metadata-backed, "text" = raw browsed file
     language: str = "zh"  # "zh" | "en" — drives pinyin/ruby on the client
-    chapter_mode: str = "detected"  # "detected" | "fallback" | "custom"
+    chapter_mode: str = "detected"  # "detected" | "fallback" | "custom" | "sections"
     chapter_pattern: str | None = None
     chapter_examples: list[str] = []
     # Browse-relative path of the source .txt, when it can be downloaded.

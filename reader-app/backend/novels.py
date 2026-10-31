@@ -13,7 +13,7 @@ from pathlib import Path
 
 from recsys.store import NovelRecord, load_all
 from webnovel.library import (
-    Chapter, detect_language, is_section_title, local_chapters, local_path, local_synopsis,
+    Chapter, detect_language, fallback_chapters, is_section_title, local_chapters, local_path, local_synopsis,
     raw_chapters, read_text_smart,
 )
 from scripts.repo_paths import store_dirs
@@ -121,11 +121,12 @@ def chapters_for(url: str, record: NovelRecord) -> list[Chapter]:
             return cached
     path = local_path(record)
     pattern = chapter_patterns.get(url)
-    chapters = (
-        local_chapters(path, pattern, chapter_patterns.effective_patterns())
-        if path and path.exists()
-        else []
-    )
+    if not (path and path.exists()):
+        chapters = []
+    elif chapter_patterns.sections_only(url):
+        chapters = fallback_chapters(read_text_smart(path))
+    else:
+        chapters = local_chapters(path, pattern, chapter_patterns.effective_patterns())
     with _cache_lock:
         _chapter_cache[url] = chapters
         _chapter_cache.move_to_end(url)
@@ -191,7 +192,7 @@ def resolve(url: str) -> ResolvedNovel | None:
         chapters=chapters,
         kind="novel",
         language=language,
-        chapter_mode="custom" if pattern else _chapter_mode(chapters),
+        chapter_mode="custom" if pattern else _chapter_mode(chapters, url),
         chapter_pattern=pattern,
         chapter_examples=chapter_patterns.get_examples(url),
         record=record,
@@ -223,10 +224,14 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         if chapters is not None:
             _chapter_cache.move_to_end(rawid)
     if chapters is None:
-        chapters = raw_chapters(
-            path,
-            chapter_patterns.get(rawid),
-            chapter_patterns.effective_patterns(),
+        chapters = (
+            fallback_chapters(read_text_smart(path))
+            if chapter_patterns.sections_only(rawid)
+            else raw_chapters(
+                path,
+                chapter_patterns.get(rawid),
+                chapter_patterns.effective_patterns(),
+            )
         )
         with _cache_lock:
             _chapter_cache[rawid] = chapters
@@ -247,14 +252,16 @@ def resolve_path(rawid: str) -> ResolvedNovel | None:
         chapters=chapters,
         kind="text",
         language=detect_language(sample),
-        chapter_mode="custom" if pattern else _chapter_mode(chapters),
+        chapter_mode="custom" if pattern else _chapter_mode(chapters, rawid),
         chapter_pattern=pattern,
         chapter_examples=chapter_patterns.get_examples(rawid),
         record=None,
     )
 
 
-def _chapter_mode(chapters: list[Chapter]) -> str:
+def _chapter_mode(chapters: list[Chapter], key: str) -> str:
+    if chapter_patterns.sections_only(key):
+        return "sections"
     return (
         "fallback"
         if chapters and all(is_section_title(chapter.title) for chapter in chapters)

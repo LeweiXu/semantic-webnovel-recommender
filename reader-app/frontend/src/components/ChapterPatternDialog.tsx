@@ -64,6 +64,25 @@ export function ChapterPatternDialog({ novel, onClose, onApplied }: Props) {
     }
   };
 
+  const sectionsOn = novel.chapter_mode === "sections";
+
+  const applySections = async () => {
+    if (!user) {
+      setError("Log in before changing shared chapter detection.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setChapterSections(novel.slug);
+      onApplied(0);
+    } catch (reason: any) {
+      setError(reason?.message ?? "Could not switch this book to sections");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remove = async () => {
     setBusy(true);
     setError(null);
@@ -141,6 +160,30 @@ export function ChapterPatternDialog({ novel, onClose, onApplied }: Props) {
             <button className="chapter-pattern-remove" disabled={busy} onClick={remove}>
               Remove custom regex
             </button>
+          )}
+        </div>
+
+        <div className="chapter-pattern-sections">
+          {sectionsOn ? (
+            <>
+              <p className="chapter-pattern-note">
+                Chapter detection is off for this book, so it's split into
+                第1节, 第2节, … sections instead.
+              </p>
+              <button className="btn-outline" disabled={busy} onClick={remove}>
+                Turn chapter detection back on
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="chapter-pattern-note">
+                If this book's headings are too messy to fix with a regex, skip
+                detection entirely and split it into evenly sized 第n节 sections.
+              </p>
+              <button className="btn-outline" disabled={busy} onClick={applySections}>
+                Ignore headings, use 第n节
+              </button>
+            </>
           )}
         </div>
 

@@ -363,6 +363,9 @@ button {
   gap: 10px;
   align-items: center;
 }
+/* .btn-seal carries a margin-top for its standalone uses; in this row it would
+   sit lower than the Download button next to it. */
+.novel-page-actions .btn-seal { margin: 0; }
 .novel-page-source {
   margin: 12px 0 0;
   font-size: 0.82rem;
@@ -2149,6 +2152,7 @@ input[type="range"]::-moz-range-thumb {
 .upload-status { flex: 0 0 8rem; }
 .upload-error { color: var(--accent); font-size: 0.82rem; }
 .upload-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.upload-actions .btn-seal { margin: 0; }
 
 /* ── Site footer ────────────────────────────────────────────────────────── */
 .site-footer {

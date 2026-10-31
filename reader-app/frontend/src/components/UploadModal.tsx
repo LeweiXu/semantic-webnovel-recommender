@@ -3,13 +3,15 @@ import { api, type UploadResult } from "../api/client";
 
 interface Props {
   file: File;
-  onClose: () => void;
+  remaining?: number; // books still queued after this one
+  onClose: () => void; // skip this book (moves on to the next queued one)
+  onCancelAll?: () => void;
   onUploaded: (result: UploadResult) => void;
 }
 
 // Confirm-before-upload modal: autodetects metadata from the dropped .txt, then
 // lets the user fix it before the file is written to library/uploads/.
-export function UploadModal({ file, onClose, onUploaded }: Props) {
+export function UploadModal({ file, remaining = 0, onClose, onCancelAll, onUploaded }: Props) {
   const [detecting, setDetecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,7 +68,9 @@ export function UploadModal({ file, onClose, onUploaded }: Props) {
       <section className="modal-card upload-card">
         <div className="modal-head">
           <div>
-            <div className="section-label">Add to library</div>
+            <div className="section-label">
+              Add to library{remaining > 0 && ` · ${remaining} more queued`}
+            </div>
             <h2 className="modal-title">Upload novel</h2>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
@@ -108,7 +112,12 @@ export function UploadModal({ file, onClose, onUploaded }: Props) {
         {error && <div className="upload-error">{error}</div>}
 
         <div className="upload-actions">
-          <button className="btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
+          {remaining > 0 && onCancelAll && (
+            <button className="btn-outline" onClick={onCancelAll} disabled={busy}>Cancel all</button>
+          )}
+          <button className="btn-outline" onClick={onClose} disabled={busy}>
+            {remaining > 0 ? "Skip" : "Cancel"}
+          </button>
           <button className="btn-seal" onClick={submit} disabled={busy || detecting}>
             {busy ? "Uploading…" : "Upload"}
           </button>

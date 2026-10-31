@@ -56,7 +56,9 @@ export function FileBrowser({
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  // Files waiting for their confirm modal, one modal per book, in pick order.
+  const [queue, setQueue] = useState<File[]>([]);
+  const [uploadedAny, setUploadedAny] = useState(false);
   const [menu, setMenu] = useState<MenuAt | null>(null);
   const [renaming, setRenaming] = useState<{ entry: BrowseEntry; value: string } | null>(null);
   const [deleting, setDeleting] = useState<BrowseEntry | null>(null);
@@ -64,20 +66,46 @@ export function FileBrowser({
   const fileInput = useRef<HTMLInputElement>(null);
   const longPress = useRef<number | null>(null);
 
-  const pickFile = (file: File | null | undefined) => {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      setError("Only .txt files can be uploaded.");
+  const pickFiles = (list: FileList | null | undefined) => {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    const txt = files.filter((f) => f.name.toLowerCase().endsWith(".txt"));
+    const skipped = files.length - txt.length;
+    setError(null);
+    setNote(skipped ? `Skipped ${skipped} non-.txt file${skipped > 1 ? "s" : ""}.` : null);
+    if (txt.length) setQueue((q) => [...q, ...txt]);
+  };
+
+  // Move on to the next queued book; once the queue empties, show the uploads
+  // folder if anything actually landed there.
+  const advance = (uploaded: boolean) => {
+    const done = uploaded || uploadedAny;
+    if (queue.length > 1) {
+      setUploadedAny(done);
+      setQueue((q) => q.slice(1));
       return;
     }
-    setError(null);
-    setPendingFile(file);
+    setQueue([]);
+    setUploadedAny(false);
+    if (done) {
+      goTo("uploads"); // show the new files where they landed
+      onChange?.();
+    }
+  };
+
+  const cancelAll = () => {
+    setQueue([]);
+    if (uploadedAny) {
+      goTo("uploads");
+      onChange?.();
+    }
+    setUploadedAny(false);
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (user) pickFile(e.dataTransfer.files?.[0]);
+    if (user) pickFiles(e.dataTransfer.files);
   };
 
   // Navigate to a folder: fetch it and reflect it in the URL (no history spam,
@@ -224,20 +252,21 @@ export function FileBrowser({
         </nav>
         {user && (
           <>
-            <button className="fb-upload" onClick={() => fileInput.current?.click()} title="Upload a .txt novel">
+            <button className="fb-upload" onClick={() => fileInput.current?.click()} title="Upload .txt novels">
               ↑ Upload .txt
             </button>
             <input
               ref={fileInput}
               type="file"
               accept=".txt,text/plain"
+              multiple
               hidden
-              onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }}
+              onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }}
             />
           </>
         )}
       </div>
-      {dragOver && <div className="fb-drophint">Drop a .txt file to upload</div>}
+      {dragOver && <div className="fb-drophint">Drop .txt files to upload</div>}
       {note && <div className="fb-note is-status" role="status">{note}</div>}
 
       {error ? (
@@ -365,15 +394,15 @@ export function FileBrowser({
         </div>
       )}
 
-      {pendingFile && (
+      {queue.length > 0 && (
         <UploadModal
-          file={pendingFile}
-          onClose={() => setPendingFile(null)}
-          onUploaded={() => {
-            setPendingFile(null);
-            goTo("uploads"); // show the new file where it landed
-            onChange?.();
-          }}
+          // Keyed per file so each book gets a fresh form, not the last one's edits.
+          key={`${queue[0].name}-${queue[0].lastModified}-${queue.length}`}
+          file={queue[0]}
+          remaining={queue.length - 1}
+          onClose={() => advance(false)}
+          onCancelAll={cancelAll}
+          onUploaded={() => advance(true)}
         />
       )}
     </div>

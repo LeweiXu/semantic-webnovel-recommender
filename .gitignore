@@ -34,3 +34,7 @@ reports/
 CLAUDE.md
 # Local copy of the OneDrive novels folder (source for scripts/epub_to_txt.py).
 /Novels/
+
+# Backend env (JWT secret, CORS origins). Deployed to the server by
+# scripts/deploy.sh, never committed.
+/.env

@@ -19,8 +19,10 @@ Done during initial deploy (you don't need to redo these):
 - `~/Novel_Project/library/` — the 9.6 GB library (9,754 novels) seeded once from WSL.
 - `~/venv-novel/` — Python venv with CPU torch, the project (`pip install -e .`), and the
   auth deps (passlib/bcrypt, python-jose, python-multipart).
-- `~/novel-api.env` — holds `NOVEL_JWT_SECRET` and `NOVEL_CORS_ORIGINS`. Lives outside
-  `~/Novel_Project/` on purpose, so `scripts/deploy.sh --delete` never wipes it. `chmod 600`.
+- `~/Novel_Project/.env` — holds `NOVEL_JWT_SECRET` and `NOVEL_CORS_ORIGINS`, `chmod 600`.
+  The source of truth is `.env` at the repo root on the dev machine: it's git-ignored
+  and `scripts/deploy.sh` ships it with the code. The script refuses to run without a
+  local `.env`, since `--delete` would otherwise remove the server's copy.
 - `~/.config/systemd/user/novel-api.service` — runs uvicorn on 8002, `Restart=on-failure`,
   enabled at boot (user lingering is on, so it survives reboots without a login session).
 - The other apps, nginx, and the root cloudflared service were not touched.
@@ -79,19 +81,20 @@ curl https://novels-api.leweixu.com/api/health
 The browser calls the backend cross-origin (Vercel domain -> leweixu.com), so the backend
 must allow that origin.
 
-On the server, put your real Vercel domain into the env file and restart:
+Put the frontend domain into `.env` at the repo root (on the dev machine, not the
+server) and deploy, which syncs it and restarts the service:
 
 ```bash
-ssh lingwei@192.168.20.9
-# edit ~/novel-api.env  ->  NOVEL_CORS_ORIGINS=https://<project>.vercel.app
+# .env  ->  NOVEL_CORS_ORIGINS=https://<project>.vercel.app
 # (comma-separate to allow more than one origin; localhost:5173 is always allowed)
-systemctl --user restart novel-api
+./scripts/deploy.sh
 ```
 
 Live origins right now: `https://novels.leweixu.com` (the custom domain; the old
 Vercel domain redirects to it) and `https://novel-reader-rec.vercel.app` (kept so
-Vercel URLs still work). Adding another frontend domain means appending it here
-and restarting; nothing in the code needs to change.
+Vercel URLs still work). Adding another frontend domain means appending it in
+`.env` and deploying; nothing in the code needs to change. Editing the server's
+copy directly works too, but the next deploy overwrites it with the local one.
 
 Then, from the deployed site, **register the username `lingwei` first** — that account is
 the admin (it's the only one that can see the scrape/download console). Do this before

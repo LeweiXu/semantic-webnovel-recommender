@@ -88,6 +88,11 @@ ssh lingwei@192.168.20.9
 systemctl --user restart novel-api
 ```
 
+Live origins right now: `https://novels.leweixu.com` (the custom domain; the old
+Vercel domain redirects to it) and `https://novel-reader-rec.vercel.app` (kept so
+Vercel URLs still work). Adding another frontend domain means appending it here
+and restarting; nothing in the code needs to change.
+
 Then, from the deployed site, **register the username `lingwei` first** — that account is
 the admin (it's the only one that can see the scrape/download console). Do this before
 sharing the URL, since registration is open and whoever claims `lingwei` first is admin.

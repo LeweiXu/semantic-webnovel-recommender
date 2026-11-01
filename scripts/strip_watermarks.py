@@ -27,9 +27,15 @@ and stripping the matched lines' final character.
 Lines that held a watermark also had their punctuation switched to ASCII, so
 those get ，？！：； back. The ad block lines themselves are dropped too.
 
+--join-titles also merges chapter names for books that put the name on the
+line after a header that has none: "第四章" + "寒冬森林" becomes
+"第四章 寒冬森林". The one rule: the next line is merged unless it ends in a
+full stop (。), which makes it the chapter's first sentence instead.
+
     python scripts/strip_watermarks.py book.txt            # dry run: report only
     python scripts/strip_watermarks.py book.txt --write    # clean in place
     python scripts/strip_watermarks.py book.txt --numbers 1017459498
+    python scripts/strip_watermarks.py book.txt --join-titles --write
 
 --write keeps the original next to the file as a hidden .<name>.bak (never
 overwritten, so a second run can't replace the true original). Pass
@@ -252,7 +258,41 @@ def strip_line_ends(lines: list[str], numbers: list[str]) -> int:
     return len(spans)
 
 
-def clean(text: str, extra_numbers: list[str] | None = None) -> dict:
+_CN_NUM = "零〇一二两三四五六七八九十百千万0-9"
+# A chapter header with no chapter name: just "第四章".
+BARE_HEADING = re.compile(rf"^(\s*第[{_CN_NUM}]+[章节回])\s*$")
+
+
+def join_titles(lines: list[str]) -> tuple[list[str], int, list[str]]:
+    """Merge a nameless 第N章 header with the line after it, separated by a space.
+
+    The rule is deliberately simple: the next line is the chapter's name unless
+    it ends in a full stop (。), in which case it's the first sentence and the
+    header is left alone. Returns (lines, headers merged, headers left alone).
+    """
+    out: list[str] = []
+    joined = 0
+    skipped: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        bare = BARE_HEADING.match(line.rstrip())
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        name = nxt.strip()
+        if bare and name:
+            if not name.endswith("。"):
+                # Keep the name line's own ending (\r on a CRLF file).
+                out.append(f"{bare.group(1)} {name}{nxt[len(nxt.rstrip()):]}")
+                joined += 1
+                i += 2
+                continue
+            skipped.append(f"{line.strip()} / {name[:30]}")
+        out.append(line)
+        i += 1
+    return out, joined, skipped
+
+
+def clean(text: str, extra_numbers: list[str] | None = None, titles: bool = False) -> dict:
     """Strip ad lines and watermarks. Returns the cleaned text plus a report."""
     known = list(dict.fromkeys(AD_NUMBER.findall(text) + (extra_numbers or [])))
     numbers = known + discover_numbers(text, known)
@@ -273,8 +313,13 @@ def clean(text: str, extra_numbers: list[str] | None = None) -> dict:
             changed.append((line, new))
         kept.append(new)
     vertical = strip_line_ends(kept, numbers)
+    titles_joined, titles_skipped = 0, []
+    if titles:
+        kept, titles_joined, titles_skipped = join_titles(kept)
     leftovers = [line for line in kept if MARKERS.search(line)]
     return {
+        "titles_joined": titles_joined,
+        "titles_skipped": titles_skipped,
         "text": "\n".join(kept),
         "numbers": numbers,
         "ad_lines": ad_lines,
@@ -294,27 +339,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-backup", action="store_true", help="with --write, skip the .bak copy")
     parser.add_argument("--numbers", nargs="*", default=[], help="extra watermark numbers to strip")
     parser.add_argument("--samples", type=int, default=8, help="before/after lines to show")
+    parser.add_argument("--join-titles", action="store_true", help="put each chapter's title on its 第N章 line")
     args = parser.parse_args(argv)
 
     raw = args.file.read_bytes()
     text = raw.decode("utf-8-sig")
-    report = clean(text, args.numbers)
+    report = clean(text, args.numbers, titles=args.join_titles)
 
     print(f"numbers:     {', '.join(report['numbers']) or '(none found)'}")
     print(f"ad lines:    {report['ad_lines']}")
     print(f"watermarks:  {report['insertions']} removed from {len(report['changed'])} lines")
     print(f"line-end:    {report['vertical']} numbers removed from line endings")
     print(f"leftovers:   {len(report['leftovers'])} lines still hold watermark symbols")
+    if args.join_titles:
+        print(f"titles:      {report['titles_joined']} chapter headers merged, "
+              f"{len(report['titles_skipped'])} left alone")
     step = max(1, len(report["changed"]) // max(1, args.samples))
     for before, after in report["changed"][::step][: args.samples]:
         print(f"\n  - {before.strip()}\n  + {after.strip()}")
     for line in report["leftovers"][:20]:
         print(f"\n  ? {line.strip()}")
+    for heading in report["titles_skipped"][:20]:
+        print(f"\n  ~ left alone (next line ends in 。): {heading}")
 
     if not args.write:
         print("\n(dry run; pass --write to clean the file)")
         return 0
-    if not (report["insertions"] or report["vertical"] or report["ad_lines"]):
+    if not (report["insertions"] or report["vertical"] or report["ad_lines"]
+            or report["titles_joined"]):
         print("\nnothing to clean")
         return 0
     note = "no backup kept"

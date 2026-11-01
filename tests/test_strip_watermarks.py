@@ -53,6 +53,27 @@ class StripWatermarkTests(unittest.TestCase):
         self.assertEqual(report["insertions"] + report["vertical"], 0)
         self.assertEqual(report["text"].split("\n")[1:], text.split("\n")[3:])
 
+    def test_join_titles_merges_unless_next_line_ends_in_full_stop(self) -> None:
+        lines = [
+            "第四章\r", "寒冬森林\r", "渊魔的恐怖人尽皆知，\r",   # merged
+            "第五章\r", "她醒了。\r",                            # first sentence: kept
+            "第二十一章共浴\r",                                   # already named: kept
+            "第一卷 寒冬大森林\r", "序章（上）\r",                # not a chapter header
+        ]
+        out, joined, skipped = sw.join_titles(lines)
+        self.assertEqual(out, [
+            "第四章 寒冬森林\r", "渊魔的恐怖人尽皆知，\r",
+            "第五章\r", "她醒了。\r",
+            "第二十一章共浴\r",
+            "第一卷 寒冬大森林\r", "序章（上）\r",
+        ])
+        self.assertEqual((joined, len(skipped)), (1, 1))
+
+    def test_titles_are_only_joined_when_asked(self) -> None:
+        text = AD + "第四章\n寒冬森林\n正文。"
+        self.assertEqual(sw.clean(text)["text"], "第四章\n寒冬森林\n正文。")
+        self.assertEqual(sw.clean(text, titles=True)["text"], "第四章 寒冬森林\n正文。")
+
     def test_write_cleans_in_place_and_keeps_one_backup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             book = Path(directory) / "book.txt"

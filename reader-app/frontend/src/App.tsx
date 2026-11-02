@@ -217,8 +217,7 @@ export default function App() {
         <SettingsPanel />
       </aside>
 
-      {/* Every page except the reader, which keeps the screen for the text. */}
-      {(view === "discover" || view === "library" || view === "novel") && <Footer />}
+      {view === "discover" && <Footer />}
 
       {authOpen && <AuthPanel onClose={() => setAuthOpen(false)} />}
       {adminOpen && user?.username === "lingwei" && (

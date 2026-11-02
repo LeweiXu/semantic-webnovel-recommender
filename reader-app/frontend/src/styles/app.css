@@ -2174,17 +2174,20 @@ input[type="range"]::-moz-range-thumb {
 .upload-actions .btn-seal { margin: 0; }
 
 /* ── Site footer ────────────────────────────────────────────────────────── */
-/* An ordinary block after the page content, not pinned: you only see it once
-   you've scrolled to the end (or straight away on a page shorter than the
-   screen, since .app is a full-height column and .stage takes the slack). */
 .site-footer {
-  flex: 0 0 auto;
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 3px;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 11px 18px calc(11px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: saturate(1.1) blur(8px);
   color: var(--muted);
   font-size: 0.8rem;
 }

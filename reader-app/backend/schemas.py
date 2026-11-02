@@ -155,6 +155,19 @@ class RenameIn(BaseModel):
     name: str      # new file name (not a path); the extension is kept
 
 
+class FileMetaIn(BaseModel):
+    path: str  # browse path of an uploads .txt
+    title: str
+    author: str = ""
+    tags: list[str] = []
+    synopsis: str = ""
+    status: str = ""
+
+
+class FileMetaOut(FileMetaIn):
+    indexed: bool  # False: no record yet, so these are guesses from the file
+
+
 class FileOpOut(BaseModel):
     ok: bool
     path: str          # where the file ended up ("" when it was deleted)

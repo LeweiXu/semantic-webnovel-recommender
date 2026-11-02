@@ -1030,6 +1030,50 @@ class FileOpEndpointTests(unittest.TestCase):
             finally:
                 self._teardown(patches)
 
+    def test_metadata_edit_creates_or_updates_the_record(self) -> None:
+        import backup
+        from recsys.store import load_category
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(backup, "schedule", lambda *a, **k: None):
+            root = Path(directory).resolve()
+            client, patches = self._setup(root)
+            try:
+                # A hand-dropped file has no record: the form gets a guess.
+                guess = client.get("/api/file/meta", params={"path": "uploads/loose.txt"}).json()
+                self.assertEqual((guess["indexed"], guess["title"]), (False, "loose"))
+                saved = client.put("/api/file/meta", json={
+                    "path": "uploads/loose.txt", "title": "散文", "author": "某人",
+                    "tags": ["百合", " ", "甜文"], "synopsis": "简介", "status": "完结",
+                }).json()
+                self.assertTrue(saved["indexed"])
+                self.assertEqual(saved["tags"], ["百合", "甜文"])
+                record = load_category("uploads")["upload:uploads/loose.txt"]
+                self.assertEqual((record.title, record.author, record.file),
+                                 ("散文", "某人", "uploads/loose.txt"))
+                self.assertEqual(record.chapter_count, 1)
+
+                # An indexed file is edited in place and keeps its url.
+                client.put("/api/file/meta", json={"path": "uploads/indexed.txt", "title": "New name"})
+                records = load_category("uploads")
+                self.assertEqual(records["upload:uploads/indexed.txt"].title, "New name")
+                self.assertEqual(len(records), 2)
+            finally:
+                self._teardown(patches)
+
+    def test_metadata_edit_is_limited_to_uploads_text_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            client, patches = self._setup(root)
+            try:
+                crawled = client.get("/api/file/meta", params={"path": "52shuku/gl/crawled.txt"})
+                self.assertEqual(crawled.status_code, 400)
+                missing = client.get("/api/file/meta", params={"path": "uploads/nope.txt"})
+                self.assertEqual(missing.status_code, 404)
+                blank = client.put("/api/file/meta", json={"path": "uploads/loose.txt", "title": "  "})
+                self.assertEqual(blank.status_code, 422)
+            finally:
+                self._teardown(patches)
+
     def test_search_finds_unindexed_uploads_without_duplicating_indexed_ones(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

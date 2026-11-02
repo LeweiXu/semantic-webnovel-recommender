@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { api, type BrowseEntry, type BrowseListing } from "../api/client";
 import { useAuth } from "../store/auth";
 import { libraryPath, navigate, novelPath, writeUrl } from "../routing";
+import { EditDetailsModal } from "./EditDetailsModal";
 import { UploadModal } from "./UploadModal";
 
 // How long a touch has to be held before it counts as a right-click.
 const LONG_PRESS_MS = 500;
 // Keep the menu off the very edge of the screen.
 const MENU_MARGIN = 8;
-const MENU_SIZE = { width: 190, height: 240 };
+const MENU_SIZE = { width: 190, height: 280 };
 
 // Split a browse path into breadcrumb crumbs: [{ label, path }], root first.
 function crumbs(path: string): { label: string; path: string }[] {
@@ -63,6 +64,7 @@ export function FileBrowser({
   const [menu, setMenu] = useState<MenuAt | null>(null);
   const [renaming, setRenaming] = useState<{ entry: BrowseEntry; value: string } | null>(null);
   const [deleting, setDeleting] = useState<BrowseEntry | null>(null);
+  const [editing, setEditing] = useState<BrowseEntry | null>(null);
   const [reload, setReload] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const longPress = useRef<number | null>(null);
@@ -339,6 +341,11 @@ export function FileBrowser({
           {canEdit(menu.entry) && (
             <>
               <div className="fb-menu-rule" />
+              {menu.entry.kind === "text" && (
+                <button role="menuitem" onClick={() => { setEditing(menu.entry); setMenu(null); }}>
+                  Edit details…
+                </button>
+              )}
               <button
                 role="menuitem"
                 onClick={() => {
@@ -398,6 +405,19 @@ export function FileBrowser({
             </div>
           </div>
         </div>
+      )}
+
+      {editing && (
+        <EditDetailsModal
+          path={editing.path}
+          name={editing.name}
+          onClose={() => setEditing(null)}
+          onSaved={(title) => {
+            setEditing(null);
+            setNote(`Saved details for ${title}.`);
+            onChange?.(); // shelf cards show the new title/author
+          }}
+        />
       )}
 
       {queue.length > 0 && (

@@ -155,6 +155,73 @@ def save(
     }
 
 
+def _record_for(rel: str) -> NovelRecord | None:
+    return next((r for r in load_category(UPLOADS_CATEGORY).values() if r.file == rel), None)
+
+
+def get_meta(rel: str, path: Path) -> dict:
+    """The editable details of an uploads file (`rel` is its library path).
+
+    Files dropped in by hand have no record yet; those get a best guess from
+    the file itself, the same one the upload form pre-fills.
+    """
+    record = _record_for(rel)
+    if record is not None:
+        return {
+            "path": rel, "indexed": True, "title": record.title, "author": record.author,
+            "tags": list(record.tags), "synopsis": record.synopsis, "status": record.status,
+        }
+    guess = detect(path.name, path.read_bytes())
+    return {
+        "path": rel, "indexed": False, "title": guess["title"], "author": guess["author"],
+        "tags": [], "synopsis": guess["synopsis"], "status": guess["status"],
+    }
+
+
+def set_meta(
+    rel: str,
+    path: Path,
+    *,
+    title: str,
+    author: str = "",
+    tags: list[str] | None = None,
+    synopsis: str = "",
+    status: str = "",
+) -> dict:
+    """Save edited details, creating the file's record if it had none.
+
+    Only the metadata changes; the file keeps its name (Rename does that), and
+    the record keeps its url, which is what reading progress is keyed by.
+    """
+    title = title.strip()
+    if not title:
+        raise ValueError("A title is required.")
+    records = load_category(UPLOADS_CATEGORY)
+    record = next((r for r in records.values() if r.file == rel), None)
+    if record is None:
+        now = datetime.now()
+        record = NovelRecord(
+            url=f"upload:{rel}",
+            category=UPLOADS_CATEGORY,
+            title=title,
+            upload_date=now.strftime("%Y年%m月%d日 %H:%M:%S"),
+            year_month=now.strftime("%Y-%m"),
+            chapter_count=len(chapters_from_text(decode_text(path.read_bytes()))),
+            source="full",
+            file=rel,
+        )
+        records[record.url] = record
+    record.title = title
+    record.author = author.strip()
+    record.status = status.strip()
+    record.synopsis = synopsis.strip()
+    record.tags = [t.strip() for t in (tags or []) if t.strip()]
+    write_category(UPLOADS_CATEGORY, records)
+    novels.invalidate(record.url)
+    backup.schedule()
+    return get_meta(rel, path)
+
+
 def resync_record(old_rel: str, new_rel: str | None) -> bool:
     """Keep uploads/metadata.jsonl in step with a moved, renamed or deleted file.
 

@@ -145,6 +145,17 @@ export interface BrowseEntry {
   managed: boolean; // admins may rename/delete it (the uploads subtree)
 }
 
+// An uploads file's editable details (admin "Edit details…" in the explorer).
+export interface FileMeta {
+  path: string;
+  title: string;
+  author: string;
+  tags: string[];
+  synopsis: string;
+  status: string;
+  indexed: boolean; // false: no library record yet, so these are guesses
+}
+
 export interface FileOpResult {
   ok: boolean;
   path: string; // where the file ended up ("" when deleted)
@@ -408,6 +419,8 @@ export const api = {
   },
   renameFile: (path: string, name: string) =>
     postJSON<FileOpResult>("/api/file/rename", { path, name }),
+  fileMeta: (path: string) => getJSON<FileMeta>(`/api/file/meta?path=${encodeURIComponent(path)}`),
+  saveFileMeta: (meta: Omit<FileMeta, "indexed">) => putJSON<FileMeta>("/api/file/meta", meta),
   deleteFile: (path: string) =>
     deleteJSON<FileOpResult>(`/api/file?path=${encodeURIComponent(path)}`),
   novel: (nid: string) => getJSON<NovelDetail>(`/api/novel/${encodeId(nid)}`),

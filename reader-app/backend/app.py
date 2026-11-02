@@ -43,7 +43,7 @@ from ids import nid_decode, nid_encode
 from schemas import (
     ArchiveIn, BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
     ChapterPatternPreviewIn, ChapterStub, DefineOut, JoinLinesOut, NovelDetail,
-    FileOpOut, ProgressIn, ProgressOut, ReadingItem, RenameIn, SearchItem,
+    FileMetaIn, FileMetaOut, FileOpOut, ProgressIn, ProgressOut, ReadingItem, RenameIn, SearchItem,
     ShelfItem, SimplifyOut,
 )
 
@@ -325,6 +325,38 @@ def file_rename(body: RenameIn, _username: str = Depends(require_admin)) -> File
     novels.invalidate_chapters(body.path, destination)
     backup.schedule()
     return FileOpOut(ok=True, path=destination, indexed=indexed)
+
+
+def _managed_txt(path: str) -> Path:
+    """An uploads .txt the admin may edit, or HTTP 400/404."""
+    try:
+        target = browse.safe_join(path)
+        browse.assert_managed(target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not target.is_file() or browse.classify(target) != "text":
+        raise HTTPException(status_code=404, detail="No such text file")
+    return target
+
+
+@app.get("/api/file/meta", response_model=FileMetaOut)
+def file_meta(path: str = Query(...), _username: str = Depends(require_admin)) -> FileMetaOut:
+    """A file's editable details (title, author, tags…). Admin-only."""
+    return FileMetaOut(**upload_api.get_meta(path, _managed_txt(path)))
+
+
+@app.put("/api/file/meta", response_model=FileMetaOut)
+def save_file_meta(body: FileMetaIn, _username: str = Depends(require_admin)) -> FileMetaOut:
+    """Save a file's details, creating its library record if it has none."""
+    target = _managed_txt(body.path)
+    try:
+        meta = upload_api.set_meta(
+            body.path, target, title=body.title, author=body.author,
+            tags=body.tags, synopsis=body.synopsis, status=body.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FileMetaOut(**meta)
 
 
 @app.delete("/api/file", response_model=FileOpOut)

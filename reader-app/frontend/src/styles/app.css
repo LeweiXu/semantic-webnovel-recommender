@@ -778,7 +778,19 @@ rt.rt-hidden {
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .modal-head .section-label { margin-bottom: 4px; }
 .modal-title { margin: 0; font-family: var(--font-reading); font-size: 1.25rem; }
-.modal-close { border: 0; background: transparent; color: var(--muted); font-size: 1.6rem; line-height: 1; }
+.modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s var(--ease);
+}
+/* Lights up like the top-bar icon buttons. */
+.modal-close:hover,
+.modal-close:focus-visible { color: var(--accent); }
+.modal-close:disabled { color: var(--muted); cursor: default; }
 .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 18px; }
 .auth-tabs button {
   border: 0;
@@ -2037,7 +2049,9 @@ input[type="range"]::-moz-range-thumb {
 
 .fb { margin-top: 12px; position: relative; border-radius: var(--radius); }
 .fb.is-drag { outline: 2px dashed var(--accent); outline-offset: 4px; }
-.fb-bar { display: flex; align-items: center; gap: 10px; }
+/* margin-bottom: the crumbs' own margin is zeroed in here, so the bar keeps the
+   Upload button off the first row itself. */
+.fb-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .fb-bar .fb-crumbs { flex: 1; margin-bottom: 0; }
 .fb-upload {
   flex: none;

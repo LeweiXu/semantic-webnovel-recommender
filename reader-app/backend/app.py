@@ -41,7 +41,7 @@ import user_settings
 from auth import current_user, optional_user, require_admin
 from ids import nid_decode, nid_encode
 from schemas import (
-    BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
+    ArchiveIn, BookmarkIn, BookmarkOut, BrowseListing, ChapterPatternIn, ChapterPatternOut,
     ChapterPatternPreviewIn, ChapterStub, DefineOut, JoinLinesOut, NovelDetail,
     FileOpOut, ProgressIn, ProgressOut, ReadingItem, RenameIn, SearchItem,
     ShelfItem, SimplifyOut,
@@ -224,6 +224,7 @@ def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
     progress = user_progress.all_progress(username)
     lib = user_library.load(username)
     removed = set(lib["removed"])
+    archived = set(lib["archived"])
 
     # The shelf is the explicit library, plus any novel with reading progress
     # that hasn't been explicitly removed (so a reading list is never lost).
@@ -265,6 +266,7 @@ def shelf(username: str = Depends(current_user)) -> list[ShelfItem]:
             added=entry.get("added", ""),
             tags=list(record.tags[:8]) if record else [],
             synopsis=(record.synopsis or "") if record else "",
+            archived=id in archived,
         ))
     # Recently read floats to the top, then recently added.
     items.sort(key=lambda it: it.updated or it.added, reverse=True)
@@ -279,7 +281,15 @@ def add_to_shelf(body: dict, username: str = Depends(current_user)) -> list[Shel
     user_library.add(
         username, info["id"], url=info["url"], title=info["title"],
         kind=info["kind"], language=info["language"],
+        unarchive=True,  # adding by hand means "I want this in my library"
     )
+    return shelf(username)
+
+
+@app.put("/api/library/shelf/archive", response_model=list[ShelfItem])
+def archive_shelf_item(body: ArchiveIn, username: str = Depends(current_user)) -> list[ShelfItem]:
+    """Move a novel into the Archive (or back out). Progress and settings stay."""
+    user_library.set_archived(username, body.id, body.archived)
     return shelf(username)
 
 

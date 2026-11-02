@@ -1953,6 +1953,71 @@ input[type="range"]::-moz-range-thumb {
 }
 .lib-card-wrap:hover .lib-card-remove,
 .lib-card-remove:focus-visible { opacity: 1; }
+/* Several corner buttons (archive + remove) sit side by side. */
+.lib-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+.lib-card-actions .lib-card-remove { position: static; }
+
+/* "Your library" heading with the Browse files / Archive buttons beside it. */
+.lib-shelf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.lib-shelf-head .dsc-section-label { margin-bottom: 0; }
+.lib-tools { display: flex; gap: 8px; }
+.lib-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 6px 13px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.lib-tool:hover,
+.lib-tool:focus-visible { color: var(--accent); border-color: var(--accent); }
+.lib-tool-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.66rem;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Large overlay for the file browser and the archive: fixed header, the body
+   scrolls. */
+.modal-card.lib-modal {
+  width: min(72rem, 100%);
+  height: min(88vh, 60rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 22px 24px;
+}
+.lib-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin-top: 14px;
+  padding-right: 2px;
+}
 .lib-card-remove:hover { color: var(--accent); border-color: var(--accent); }
 .lib-card.is-downloading {
   cursor: default;
@@ -1969,23 +2034,6 @@ input[type="range"]::-moz-range-thumb {
 .lib-card-meta { color: var(--muted); font-size: 0.74rem; }
 
 /* ── File explorer ──────────────────────────────────────────────────────── */
-.fb-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.fb-toggle:hover { color: var(--accent); }
-.fb-caret { display: inline-block; transition: transform 0.15s var(--ease); }
-.fb-caret.is-open { transform: rotate(90deg); }
 
 .fb { margin-top: 12px; position: relative; border-radius: var(--radius); }
 .fb.is-drag { outline: 2px dashed var(--accent); outline-offset: 4px; }

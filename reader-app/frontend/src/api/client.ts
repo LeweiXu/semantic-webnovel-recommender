@@ -58,6 +58,7 @@ export interface ShelfItem {
   added: string;
   tags: string[];
   synopsis: string;
+  archived: boolean; // in the Archive rather than the main Library list
 }
 
 export interface SearchItem {
@@ -381,6 +382,9 @@ export const api = {
   },
   shelf: () => getJSON<ShelfItem[]>("/api/library/shelf"),
   addToShelf: (id: string) => postJSON<ShelfItem[]>("/api/library/shelf", { id }),
+  // Move a novel into the Archive (or back out). Progress and settings stay.
+  archiveShelfItem: (id: string, archived: boolean) =>
+    putJSON<ShelfItem[]>("/api/library/shelf/archive", { id, archived }),
   removeFromShelf: (id: string) =>
     deleteJSON<ShelfItem[]>(`/api/library/shelf?id=${encodeURIComponent(id)}`),
   // Fetch a downloadable file (epub/pdf/docx) as a blob, auth header attached.

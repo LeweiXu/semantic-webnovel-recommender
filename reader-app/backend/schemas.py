@@ -55,6 +55,12 @@ class ShelfItem(BaseModel):
     added: str = ""
     tags: list[str] = []
     synopsis: str = ""
+    archived: bool = False  # in the Archive rather than the main Library list
+
+
+class ArchiveIn(BaseModel):
+    id: str
+    archived: bool = True
 
 
 class SearchItem(BaseModel):

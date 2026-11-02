@@ -328,7 +328,73 @@ class ShelfTests(unittest.TestCase):
             user_library, "LIBRARY_DIR", Path(directory)
         ):
             user_library.add("alice", "x", url="x", title="X")
-            self.assertEqual(user_library.load("bob"), {"items": {}, "removed": []})
+            self.assertEqual(
+                user_library.load("bob"), {"items": {}, "removed": [], "archived": []},
+            )
+
+    def test_archive_survives_reopening_and_clears_on_explicit_add_or_remove(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            user_library, "LIBRARY_DIR", Path(directory)
+        ):
+            user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A", kind="text")
+            self.assertTrue(user_library.set_archived("alice", "GL/a.txt", True))
+            self.assertFalse(user_library.set_archived("alice", "GL/a.txt", True))
+            # Opening auto-adds; that must not pull it out of the archive.
+            user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A", kind="text")
+            self.assertIn("GL/a.txt", user_library.load("alice")["archived"])
+            # An explicit add does.
+            user_library.add("alice", "GL/a.txt", url="GL/a.txt", title="A", kind="text", unarchive=True)
+            self.assertNotIn("GL/a.txt", user_library.load("alice")["archived"])
+            # Removing an archived novel clears the archive flag too.
+            user_library.set_archived("alice", "GL/a.txt", True)
+            user_library.remove("alice", "GL/a.txt")
+            lib = user_library.load("alice")
+            self.assertNotIn("GL/a.txt", lib["archived"])
+            self.assertIn("GL/a.txt", lib["removed"])
+
+    def test_archive_round_trip_through_the_api(self) -> None:
+        from fastapi.testclient import TestClient
+        import app as backend_app
+        import user_progress
+        from auth import current_user
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "novel.txt").write_text("第一章 开端\n正文。\n第二章 继续\n正文。\n", encoding="utf-8")
+            backend_app.app.dependency_overrides[current_user] = lambda: "alice"
+            backend_app.app.dependency_overrides[backend_app.optional_user] = lambda: "alice"
+            patches = [
+                patch.object(browse, "BROWSE_DIR", root),
+                patch.object(user_library, "LIBRARY_DIR", root / "lib"),
+                patch.object(user_progress, "PROGRESS_DIR", root / "progress"),
+                patch.object(novels, "all_records", lambda: {}),
+            ]
+            for item in patches:
+                item.start()
+            try:
+                client = TestClient(backend_app.app)
+
+                def archived() -> dict:
+                    return {it["id"]: it["archived"] for it in client.get("/api/library/shelf").json()}
+
+                client.get("/api/novel/novel.txt")  # opening puts it on the shelf
+                self.assertEqual(archived(), {"novel.txt": False})
+                rows = client.put("/api/library/shelf/archive", json={"id": "novel.txt"}).json()
+                self.assertEqual([r["archived"] for r in rows], [True])
+                client.get("/api/novel/novel.txt")  # reopening keeps it archived
+                self.assertEqual(archived(), {"novel.txt": True})
+                client.put("/api/library/shelf/archive", json={"id": "novel.txt", "archived": False})
+                self.assertEqual(archived(), {"novel.txt": False})
+                client.put("/api/library/shelf/archive", json={"id": "novel.txt"})
+                client.delete("/api/library/shelf", params={"id": "novel.txt"})
+                self.assertEqual(archived(), {})
+                client.post("/api/library/shelf", json={"id": "novel.txt"})
+                self.assertEqual(archived(), {"novel.txt": False})
+            finally:
+                for item in patches:
+                    item.stop()
+                backend_app.app.dependency_overrides.clear()
+                novels._chapter_cache.clear()
 
 
 if __name__ == "__main__":

@@ -134,6 +134,126 @@ function DownloadingCard({
   );
 }
 
+// One novel on the shelf. `actions` are the small round buttons in the
+// top-right corner (archive / unarchive, remove), shown on hover.
+function ShelfCard({
+  item,
+  onOpen,
+  actions,
+}: {
+  item: ShelfItem;
+  onOpen: () => void;
+  actions: { label: string; icon: JSX.Element; onClick: () => void }[];
+}) {
+  return (
+    <div className="lib-card-wrap">
+      <button className="lib-card" onClick={() => onOpen()}>
+        <div className="lib-card-head">
+          <h3 className="lib-card-title">{item.title}</h3>
+          <span className="lib-card-author">
+            {item.author || (item.kind === "doc" ? "Document" : "—")}
+            {item.category ? ` · ${catLabel(item.category)}` : ""}
+            {item.language === "en" ? " · EN" : ""}
+          </span>
+        </div>
+        {item.synopsis && <p className="lib-card-synopsis">{item.synopsis}</p>}
+        {(item.tags ?? []).length > 0 && (
+          <div className="lib-card-tags">
+            {(item.tags ?? []).slice(0, 4).map((t) => (
+              <span key={t} className="lib-tag">{t}</span>
+            ))}
+          </div>
+        )}
+        <div className="lib-card-foot">
+          {item.kind === "doc" ? (
+            <span className="lib-card-meta">Download file</span>
+          ) : (
+            <>
+              <span className="lib-bar" aria-hidden>
+                <span className="lib-bar-fill" style={{ width: `${pct(item.position, item.total)}%` }} />
+              </span>
+              <span className="lib-card-meta">
+                ch {item.position + 1}{item.total ? `/${item.total}` : ""} · {pct(item.position, item.total)}%
+              </span>
+            </>
+          )}
+        </div>
+      </button>
+      <div className="lib-card-actions">
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            className="lib-card-remove"
+            onClick={action.onClick}
+            aria-label={action.label}
+            title={action.label}
+          >
+            {action.icon}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ICON_REMOVE = (
+  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+    <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+// A box with a lid: into the archive / back out (arrow flips).
+const archiveIcon = (out: boolean) => (
+  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="1.5" y="2" width="9" height="2.5" rx="0.5" />
+    <path d="M2.5 4.5v5h7v-5" />
+    <path d={out ? "M6 8.5V5.8M4.8 7L6 5.8 7.2 7" : "M6 5.8v2.7M4.8 7.3L6 8.5l1.2-1.2"} />
+  </svg>
+);
+
+const ICON_FOLDER = (
+  <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
+    <path d="M1.5 3a.5.5 0 0 1 .5-.5h2.6l1 1.1H10a.5.5 0 0 1 .5.5v5.4a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5z" />
+  </svg>
+);
+
+// A large overlay for the Library's side tools (file browser, archive). Escape
+// closes it, unless a dialog of its own (upload, rename…) is open on top.
+function LibraryModal({
+  label,
+  title,
+  onClose,
+  children,
+}: {
+  label: string;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && document.querySelectorAll(".modal-layer").length === 1) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label={title}>
+      <button className="modal-scrim" onClick={onClose} aria-label="Close" />
+      <section className="modal-card lib-modal">
+        <div className="modal-head">
+          <div>
+            <div className="section-label">{label}</div>
+            <h2 className="modal-title">{title}</h2>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="lib-modal-body">{children}</div>
+      </section>
+    </div>
+  );
+}
+
 export function LibraryPage() {
   const user = useAuth((s) => s.user);
   const ready = useAuth((s) => s.ready);
@@ -151,6 +271,7 @@ export function LibraryPage() {
   const [results, setResults] = useState<SearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [browseOpen, setBrowseOpen] = useState(!!initialBrowsePath);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   const refreshShelf = () => {
     if (!user) {
@@ -185,6 +306,22 @@ export function LibraryPage() {
     setShelf((cur) => cur.filter((it) => it.id !== item.id)); // optimistic
     api
       .removeFromShelf(item.id)
+      .then((items) => {
+        setShelf(items);
+        if (user) writeShelfCache(user.username, items);
+      })
+      .catch(refreshShelf);
+  };
+
+  // Archived novels keep their progress and settings; they just leave the main
+  // list for the collapsible Archive below it.
+  const active = shelf.filter((it) => !it.archived);
+  const archived = shelf.filter((it) => it.archived);
+
+  const archiveItem = (item: ShelfItem, archive: boolean) => {
+    setShelf((cur) => cur.map((it) => (it.id === item.id ? { ...it, archived: archive } : it))); // optimistic
+    api
+      .archiveShelfItem(item.id, archive)
       .then((items) => {
         setShelf(items);
         if (user) writeShelfCache(user.username, items);
@@ -318,22 +455,21 @@ export function LibraryPage() {
 
       {!query.trim() && (
         <section className="lib-section">
-          <button
-            className="fb-toggle"
-            onClick={() => setBrowseOpen((v) => !v)}
-            aria-expanded={browseOpen}
-          >
-            <span className={`fb-caret${browseOpen ? " is-open" : ""}`} aria-hidden>▸</span>
-            Browse files
-          </button>
-          {browseOpen && <FileBrowser initialPath={initialBrowsePath} onChange={refreshShelf} />}
-        </section>
-      )}
-
-      {!query.trim() && (
-        <section className="lib-section">
-          <div className="dsc-section-label">Your library</div>
-          {shelf.length === 0 && orphanDownloads.length === 0 ? (
+          <div className="lib-shelf-head">
+            <div className="dsc-section-label">Your library</div>
+            <div className="lib-tools">
+              <button className="lib-tool" onClick={() => setBrowseOpen(true)}>
+                {ICON_FOLDER}
+                Browse files
+              </button>
+              <button className="lib-tool" onClick={() => setArchiveOpen(true)}>
+                {archiveIcon(false)}
+                Archive
+                {archived.length > 0 && <span className="lib-tool-count">{archived.length}</span>}
+              </button>
+            </div>
+          </div>
+          {active.length === 0 && orphanDownloads.length === 0 ? (
             <div className="dsc-note dsc-idle">
               {!ready
                 ? " " /* auth still restoring — don't flash the logged-out prompt */
@@ -353,7 +489,7 @@ export function LibraryPage() {
                   onCancel={() => void cancelDownload(d.url)}
                 />
               ))}
-              {shelf.map((r) => {
+              {active.map((r) => {
                 const dl = downloads[r.url];
                 if (!r.downloaded) {
                   return (
@@ -375,55 +511,58 @@ export function LibraryPage() {
                   );
                 }
                 return (
-                  <div key={r.id} className="lib-card-wrap">
-                    <button className="lib-card" onClick={() => openItem(r)}>
-                      <div className="lib-card-head">
-                        <h3 className="lib-card-title">{r.title}</h3>
-                        <span className="lib-card-author">
-                          {r.author || (r.kind === "doc" ? "Document" : "—")}
-                          {r.category ? ` · ${catLabel(r.category)}` : ""}
-                          {r.language === "en" ? " · EN" : ""}
-                        </span>
-                      </div>
-                      {r.synopsis && <p className="lib-card-synopsis">{r.synopsis}</p>}
-                      {(r.tags ?? []).length > 0 && (
-                        <div className="lib-card-tags">
-                          {(r.tags ?? []).slice(0, 4).map((t) => (
-                            <span key={t} className="lib-tag">{t}</span>
-                          ))}
-                        </div>
-                      )}
-                      <div className="lib-card-foot">
-                        {r.kind === "doc" ? (
-                          <span className="lib-card-meta">Download file</span>
-                        ) : (
-                          <>
-                            <span className="lib-bar" aria-hidden>
-                              <span className="lib-bar-fill" style={{ width: `${pct(r.position, r.total)}%` }} />
-                            </span>
-                            <span className="lib-card-meta">
-                              ch {r.position + 1}{r.total ? `/${r.total}` : ""} · {pct(r.position, r.total)}%
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </button>
-                    <button
-                      className="lib-card-remove"
-                      onClick={() => removeItem(r)}
-                      aria-label="Remove from library"
-                      title="Remove from library"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
-                        <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  </div>
+                  <ShelfCard
+                    key={r.id}
+                    item={r}
+                    onOpen={() => openItem(r)}
+                    actions={[
+                      { label: "Move to archive", icon: archiveIcon(false), onClick: () => archiveItem(r, true) },
+                      { label: "Remove from library", icon: ICON_REMOVE, onClick: () => removeItem(r) },
+                    ]}
+                  />
                 );
               })}
             </div>
           )}
         </section>
+      )}
+
+      {browseOpen && (
+        <LibraryModal
+          label="Library"
+          title="Browse files"
+          onClose={() => {
+            setBrowseOpen(false);
+            writeUrl(libraryPath()); // drop the folder the browser left in the URL
+          }}
+        >
+          <FileBrowser initialPath={initialBrowsePath} onChange={refreshShelf} />
+        </LibraryModal>
+      )}
+
+      {archiveOpen && (
+        <LibraryModal label="Library" title="Archive" onClose={() => setArchiveOpen(false)}>
+          {archived.length === 0 ? (
+            <div className="dsc-note dsc-idle">
+              Nothing archived. Use the box button on a library card to move a novel here;
+              its progress and settings stay as they are.
+            </div>
+          ) : (
+            <div className="lib-grid">
+              {archived.map((r) => (
+                <ShelfCard
+                  key={r.id}
+                  item={r}
+                  onOpen={() => openItem(r)}
+                  actions={[
+                    { label: "Move back to library", icon: archiveIcon(true), onClick: () => archiveItem(r, false) },
+                    { label: "Remove from library", icon: ICON_REMOVE, onClick: () => removeItem(r) },
+                  ]}
+                />
+              ))}
+            </div>
+          )}
+        </LibraryModal>
       )}
     </div>
   );

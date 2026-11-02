@@ -265,9 +265,10 @@ export function SettingsPanel() {
       </div>
 
       <div className="setting setting-block">
+        <label className="setting-label">Defaults</label>
         <ConfirmButton
-          label="Reset to defaults"
-          confirmLabel="Reset settings"
+          label="Reset To Defaults"
+          confirmLabel="Confirm?"
           onConfirm={() => {
             reset();
             say("reset", "Settings restored to defaults.");
@@ -276,7 +277,9 @@ export function SettingsPanel() {
         {noticeFor("reset")}
       </div>
 
-      {novel && (
+      {/* Only while reading: "current" is the spot on screen in the reader. The
+          novel stays loaded after you leave it, so `novel` alone isn't enough. */}
+      {novel && view === "read" && (
         <div className="setting setting-block">
           <label className="setting-label">Progress</label>
           <button

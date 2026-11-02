@@ -105,17 +105,19 @@ export default function App() {
   // The header still reports where you are in the book; the spine tracks the
   // chapter you're reading, which is the movement you actually feel.
   const bookPct = total ? Math.min(100, ((furthest + 1) / total) * 100) : 0;
-  const spinePct = view === "read" ? chapterPct : 0;
   // The stripped-down header (Contents + Settings only) applies to the reader on
   // mobile/tablet. The novel page keeps the full header so there's a way out.
   const mobileReader = isMobile && view === "read";
 
   return (
     <div className={`app${view === "read" ? " reading" : ""}${view === "read" && !chromeVisible ? " chrome-hidden" : ""}`}>
-      {/* Progress gutter — the spine of the bound book, filling cinnabar as you read. */}
-      <div className="spine" aria-hidden>
-        <div className="spine-fill" style={{ height: `${spinePct}%` }} />
-      </div>
+      {/* Progress gutter — the spine of the bound book, filling cinnabar as you
+          read. Only in the reader; everywhere else there's nothing to track. */}
+      {view === "read" && (
+        <div className="spine" aria-hidden>
+          <div className="spine-fill" style={{ height: `${chapterPct}%` }} />
+        </div>
+      )}
 
       <header className="topbar">
         <div className="topbar-side">
